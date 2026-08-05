@@ -79,6 +79,7 @@ jobs:
         if: matrix.backend == 'cuda'
         uses: Jimver/cuda-toolkit@v0.2.30
         with:
+          cuda: '13.1.0'
           method: network
 
       # Best-effort ROCm 7.12 (TheRock), matching the version Lemonade pins.
@@ -165,6 +166,20 @@ jobs:
           set -e
           mkdir -p dist
           cp LICENSE THIRD_PARTY_NOTICES.md dist/
+          if [ "${{ matrix.backend }}" = "cuda" ]; then
+            cuda_notices=dist/NVIDIA-CUDA-LICENSES
+            mkdir -p "$cuda_notices"
+            cp thirdparty/nvidia-cuda-runtime/README.md "$cuda_notices/"
+            curl --fail --silent --show-error --location --retry 3 \
+              https://developer.download.nvidia.com/compute/cuda/redist/cuda_cudart/LICENSE.txt \
+              --output "$cuda_notices/cuda_cudart-LICENSE.txt"
+            curl --fail --silent --show-error --location --retry 3 \
+              https://developer.download.nvidia.com/compute/cuda/redist/libcublas/LICENSE.txt \
+              --output "$cuda_notices/libcublas-LICENSE.txt"
+            cuda_license_sha=e2c71babfd18a8e69542dd7e9ca018f9caa438094001a58e6bc4d8c999bf0d07
+            echo "$cuda_license_sha  $cuda_notices/cuda_cudart-LICENSE.txt" | sha256sum --check -
+            echo "$cuda_license_sha  $cuda_notices/libcublas-LICENSE.txt" | sha256sum --check -
+          fi
           if [ "${{ matrix.os }}" = "windows" ]; then
             cp build/trellis-server.exe dist/
             cp build/trellis-cli.exe dist/
@@ -191,23 +206,73 @@ jobs:
             cp build/trellis-server dist/
             cp build/trellis-cli dist/
             cp -P build/libggml*.so* dist/ 2>/dev/null || true
+            # Patch only project-owned ELF files. NVIDIA's CUDA agreement permits
+            # Linux redistributables only when their object files remain unmodified.
+            sudo apt-get install -y -qq patchelf
+            while IFS= read -r -d '' f; do
+              patchelf --set-rpath '$ORIGIN' "$f"
+            done < <(find dist -maxdepth 1 -type f \
+              \( -name 'trellis-server' -o -name 'trellis-cli' -o -name 'libggml*.so*' \) \
+              -print0)
+
             # The ROCm runtime comes from the shared TheRock SDK that Lemonade
-            # installs per the user's gfx arch (via LD_LIBRARY_PATH), not bundled
-            # here. CUDA has no such shared SDK, so bundle its runtime next to the
-            # binary (mirrors sd-cpp / llama.cpp); the $ORIGIN rpath below then
-            # resolves it with no system CUDA toolkit required.
+            # installs per the user's gfx arch. CUDA has no such shared SDK, so
+            # copy its redistributable runtime only after the project ELF patch.
             if [ "${{ matrix.backend }}" = "cuda" ]; then
               cuda_lib="${CUDA_PATH:-/usr/local/cuda}/lib64"
               for l in libcudart libcublas libcublasLt; do
                 cp -P "$cuda_lib"/$l.so* dist/ 2>/dev/null || true
               done
             fi
-            sudo apt-get install -y -qq patchelf
-            for f in $(find dist -type f); do patchelf --set-rpath '$ORIGIN' "$f" 2>/dev/null || true; done
             ASSET="trellis-${{ matrix.backend }}-linux-x64.tar.gz"
             tar -C dist -czf "$ASSET" .
           fi
           echo "ASSET=$ASSET" >> "$GITHUB_ENV"
+
+      - name: Verify notices in Linux bundles
+        if: matrix.os == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=app/src-tauri/target/release/bundle
+          appimage="$(realpath "$(find "$base/appimage" -name '*.AppImage' -print -quit)")"
+          deb="$(realpath "$(find "$base/deb" -name '*.deb' -print -quit)")"
+          test -f "$appimage"
+          test -f "$deb"
+          product_name="$(python3 -c 'import json; print(json.load(open("app/src-tauri/tauri.conf.json", encoding="utf-8"))["productName"])')"
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          dpkg-deb -x "$deb" "$work/deb"
+          cmp LICENSE "$work/deb/usr/lib/$product_name/LICENSE"
+          cmp THIRD_PARTY_NOTICES.md "$work/deb/usr/lib/$product_name/THIRD_PARTY_NOTICES.md"
+          (
+            cd "$work"
+            "$appimage" --appimage-extract >/dev/null
+            cmp "$GITHUB_WORKSPACE/LICENSE" "squashfs-root/usr/lib/$product_name/LICENSE"
+            cmp "$GITHUB_WORKSPACE/THIRD_PARTY_NOTICES.md" \
+              "squashfs-root/usr/lib/$product_name/THIRD_PARTY_NOTICES.md"
+          )
+
+      - name: Verify notices in NSIS installer
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = Get-ChildItem 'app/src-tauri/target/release/bundle/nsis' -Filter '*-setup.exe' |
+            Select-Object -First 1
+          if (-not $installer) { throw 'NSIS installer not found' }
+          $payload = Join-Path $env:RUNNER_TEMP 'trellis-nsis-payload'
+          Remove-Item $payload -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item $payload -ItemType Directory | Out-Null
+          & 7z x -y "-o$payload" $installer.FullName | Out-Host
+          if ($LASTEXITCODE -ne 0) { throw "7-Zip failed to extract $($installer.FullName)" }
+          foreach ($name in @('LICENSE', 'THIRD_PARTY_NOTICES.md')) {
+            $expected = (Get-FileHash (Join-Path $env:GITHUB_WORKSPACE $name) -Algorithm SHA256).Hash
+            $matched = Get-ChildItem $payload -Recurse -File -Filter $name | Where-Object {
+              (Get-FileHash $_.FullName -Algorithm SHA256).Hash -eq $expected
+            }
+            if (-not $matched) { throw "$name missing or altered in NSIS installer" }
+          }
 
       - name: Resolve release tag
         id: tag
