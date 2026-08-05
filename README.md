@@ -327,8 +327,8 @@ and disables the historical FQMS fallback. It has three explicit stop policies:
 | policy | flags | meaning |
 |--------|-------|---------|
 | fixed target | `--meshopt --stop target --faces N` | existing guarded target behavior (also the default when only `--meshopt` is given) |
-| error driven | `--meshopt --stop error --error-percent P` | use a zero triangle target and remove the cheapest legal collapses until the relative error budget or topology stops progress |
-| bounded | `--meshopt --stop range --min-faces A --max-faces B --error-percent P` | find the error-limited quality result toward `A`; if it remains above `B`, explicitly run a count-first pass from the original mesh and report both counts plus whether the error budget was exceeded |
+| error driven | `--meshopt --stop error --error-percent P` | use a zero triangle target and remove the cheapest legal collapses until the relative error budget or topology stops progress; an unlimited-error probe distinguishes those stop causes without replacing the quality result |
+| bounded | `--meshopt --stop range --min-faces A --max-faces B --error-percent P` | protect `A` as a real floor, find the error-limited quality result toward it, and if necessary run an explicit count-first pass toward `B` while preserving the floor |
 
 `P` is deformation relative to the mesh extent, not a percentage of triangles:
 meshoptimizer defines the extent as the longest side of the input axis-aligned
@@ -337,10 +337,15 @@ also prints the corresponding distance in mesh units. This is a geometric
 quadric-error measure, not an angle threshold or a guaranteed Hausdorff bound.
 Every adaptive run emits one machine-parseable `[meshopt-policy]` line with the
 requested/result error, quality/output face counts, constraints, force status,
-and stop reason. A meshoptimizer collapse batch or zero-area cleanup can cross
-the requested minimum; this is never described as protected and is reported as
-`stop_reason=min-missed min_met=no`. Adaptive-only flags are rejected outside
-their matching stop mode. `--meshopt` and `--decim` are mutually exclusive.
+and stop reason. Because meshoptimizer collapses in batches, bounded mode retries
+from the original mesh with a raised internal target when a batch would cross
+the minimum; the original is the deterministic safe fallback. The helper
+compacts exactly the returned triangles, and the adaptive post-replay path skips
+the legacy second weld/fill/component-drop pass so its reported count remains
+the reducer's final count. If no output fits the requested band, the log reports
+`stop_reason=band-unreachable` while keeping the protected floor. Adaptive-only
+flags are rejected outside their matching stop mode. `--meshopt` and `--decim`
+are mutually exclusive.
 
 ## Licensing
 
