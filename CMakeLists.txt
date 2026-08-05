@@ -261,6 +261,13 @@ endif()
 target_compile_definitions(trellis_core PRIVATE TRELLIS_BUILD_BACKEND="${TRELLIS_BUILD_BACKEND}")
 
 # --- executables -----------------------------------------------------------
+include(CTest)
+if(BUILD_TESTING)
+  add_executable(trellis-test-args src/test_trellis_args.cpp src/trellis_args.cpp)
+  target_include_directories(trellis-test-args PRIVATE include)
+  add_test(NAME trellis-args COMMAND trellis-test-args)
+endif()
+
 add_executable(trellis-smoke src/smoke_test.cpp)
 target_link_libraries(trellis-smoke PRIVATE trellis_core)
 set_target_properties(trellis-smoke PROPERTIES BUILD_RPATH "${GGML_RPATH}")
