@@ -134,6 +134,17 @@ int main() {
         CHECK(!trellis::validate_sampler_params(p, error));
     }
 
+    {
+        trellis::TrellisParams defaults;
+        CHECK(!defaults.c2s_diagnostics);
+        CHECK(parse({"test"}, defaults));
+        CHECK(!defaults.c2s_diagnostics);
+
+        trellis::TrellisParams enabled;
+        CHECK(parse({"test", "--c2s-diagnostics"}, enabled));
+        CHECK(enabled.c2s_diagnostics);
+    }
+
     if (failures) return 1;
     std::puts("sampler argument tests passed");
     return 0;
