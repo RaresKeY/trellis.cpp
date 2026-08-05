@@ -64,6 +64,20 @@ jobs:
           grep -Fq 'Copyright (c) 2010, Google Inc.' THIRD_PARTY_NOTICES.md
           grep -Fq 'cp LICENSE THIRD_PARTY_NOTICES.md dist/' .github/workflows/release.yml
 
+      - name: Resolve pinned CUDA license inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --retry 3 \
+            https://developer.download.nvidia.com/compute/cuda/redist/cuda_cudart/LICENSE.txt \
+            --output /tmp/cuda-cudart-LICENSE.txt
+          curl --fail --silent --show-error --location --retry 3 \
+            https://developer.download.nvidia.com/compute/cuda/redist/libcublas/LICENSE.txt \
+            --output /tmp/libcublas-LICENSE.txt
+          test -s /tmp/cuda-cudart-LICENSE.txt
+          test -s /tmp/libcublas-LICENSE.txt
+          sha256sum /tmp/cuda-cudart-LICENSE.txt /tmp/libcublas-LICENSE.txt
+
       - name: Test GLB topology diagnostics
         run: >
           python3 -m unittest discover
