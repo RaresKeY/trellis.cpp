@@ -157,6 +157,9 @@ quality is at parity with the reference CUDA postprocess on identical inputs.
 
 `TRELLIS_DBG_*` environment variables toggle developer debug logging only; no
 behavior-driving environment variables remain — use the flags above.
+`--c2s-diagnostics` enables request-scoped subdivision, memory, graph-allocation,
+and chunk-size telemetry; the HTTP equivalent is `c2s_diagnostics=on`. It is
+off by default and does not change allocation or generation behavior.
 
 ### trellis-server
 
