@@ -369,7 +369,8 @@ void clean_mesh(int V, std::vector<int32_t>& faces) {
 }
 
 void decimate_simplify(const std::vector<float>& verts, int V, const std::vector<int32_t>& faces, int F,
-                       int target_faces, std::vector<float>& ov, std::vector<int32_t>& of) {
+                       int target_faces, std::vector<float>& ov, std::vector<int32_t>& of,
+                       SimplifyFallback fallback) {
     // Progressive error ladder: a permissive one-shot error budget lets
     // meshopt_SimplifyPrune delete the whole mesh, while a strict one stalls far
     // above the target on messy voxel topology. Each rung re-simplifies the
@@ -399,7 +400,7 @@ void decimate_simplify(const std::vector<float>& verts, int V, const std::vector
     // unguarded quadric collapse (FQMS) — the same approach the reference's
     // cumesh simplifier takes — which reaches the count while following the
     // error metric.
-    if (n > target_idx * 6 / 5) {
+    if (fallback == SimplifyFallback::Fqms && n > target_idx * 6 / 5) {
         Simplify::vertices.clear();
         Simplify::triangles.clear();
         Simplify::vertices.resize((size_t)V);
