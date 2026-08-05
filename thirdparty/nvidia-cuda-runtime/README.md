@@ -14,9 +14,9 @@ Agreement and CUDA Toolkit Supplement:
 https://docs.nvidia.com/cuda/archive/13.1.1/eula/index.html
 
 Use of the CUDA build and these components is subject to that agreement. In
-particular, the components are supplied only for use by trellis.cpp on systems
-with NVIDIA GPUs. They are not supplied as a stand-alone SDK and may not be
-separated, modified, or redistributed except as the NVIDIA agreement permits.
+particular, the components are supplied only for access by trellis.cpp on
+systems with NVIDIA GPUs, not as a stand-alone SDK. They may not be modified or
+redistributed except as the NVIDIA agreement permits.
 No NVIDIA sponsorship or endorsement is claimed.
 
 The `NVIDIA-CUDA-LICENSES` directory in each CUDA release archive includes the
