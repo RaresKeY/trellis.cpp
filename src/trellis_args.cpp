@@ -199,6 +199,111 @@ bool validate_sampler_params(const TrellisParams& p, std::string& error) {
     return true;
 }
 
+const char* dense_policy_name(DensePolicy policy) noexcept {
+    switch (policy) {
+        case DensePolicy::Fail:        return "fail";
+        case DensePolicy::Fallback512: return "fallback-512";
+        case DensePolicy::Allow:       return "allow";
+    }
+    return "invalid";
+}
+
+const char* dense_guard_action_name(DenseGuardAction action) noexcept {
+    switch (action) {
+        case DenseGuardAction::NotApplicable: return "not-applicable";
+        case DenseGuardAction::Disabled:      return "disabled";
+        case DenseGuardAction::Pass:          return "pass";
+        case DenseGuardAction::Fail:          return "fail";
+        case DenseGuardAction::Fallback512:   return "fallback-512";
+        case DenseGuardAction::Allow:         return "allow";
+    }
+    return "invalid";
+}
+
+bool set_density_option(const std::string& name, const std::string& value,
+                        TrellisParams& p, std::string& error) {
+    const std::string key = sampler_key(name);
+    if (key == "max_cascade_tokens") {
+        int parsed = 0;
+        if (!parse_strict_int(value, parsed)) {
+            error = "max_cascade_tokens must be a base-10 integer";
+            return false;
+        }
+        p.max_cascade_tokens = parsed;
+        error.clear();
+        return true;
+    }
+    if (key == "dense_policy") {
+        if (value == "fail") p.dense_policy = DensePolicy::Fail;
+        else if (value == "fallback-512") p.dense_policy = DensePolicy::Fallback512;
+        else if (value == "allow") p.dense_policy = DensePolicy::Allow;
+        else {
+            error = "dense_policy must be fail, fallback-512, or allow";
+            return false;
+        }
+        error.clear();
+        return true;
+    }
+    error = "unknown density option: " + name;
+    return false;
+}
+
+bool validate_density_params(const TrellisParams& p, std::string& error) {
+    if (p.max_cascade_tokens < 0) {
+        error = "max_cascade_tokens must be non-negative";
+        return false;
+    }
+    switch (p.dense_policy) {
+        case DensePolicy::Fail:
+        case DensePolicy::Fallback512:
+        case DensePolicy::Allow:
+            error.clear();
+            return true;
+    }
+    error = "dense_policy is invalid";
+    return false;
+}
+
+DenseGuardDecision resolve_dense_guard(bool requested_cascade,
+                                       int selected_resolution,
+                                       int observed_tokens,
+                                       int max_cascade_tokens,
+                                       DensePolicy policy) noexcept {
+    DenseGuardDecision decision;
+    decision.resolved_cascade = requested_cascade;
+    decision.resolved_resolution = requested_cascade ? selected_resolution : 512;
+
+    if (!requested_cascade) {
+        decision.action = DenseGuardAction::NotApplicable;
+        return decision;
+    }
+    if (max_cascade_tokens == 0) {
+        decision.action = DenseGuardAction::Disabled;
+        return decision;
+    }
+    if (observed_tokens <= max_cascade_tokens) {
+        decision.action = DenseGuardAction::Pass;
+        return decision;
+    }
+    switch (policy) {
+        case DensePolicy::Fail:
+            decision.action = DenseGuardAction::Fail;
+            decision.proceed = false;
+            return decision;
+        case DensePolicy::Fallback512:
+            decision.action = DenseGuardAction::Fallback512;
+            decision.resolved_cascade = false;
+            decision.resolved_resolution = 512;
+            return decision;
+        case DensePolicy::Allow:
+            decision.action = DenseGuardAction::Allow;
+            return decision;
+    }
+    decision.action = DenseGuardAction::Fail;
+    decision.proceed = false;
+    return decision;
+}
+
 void print_usage(const char* argv0, bool server) {
     if (server) {
         fprintf(stderr,
@@ -220,6 +325,8 @@ void print_usage(const char* argv0, bool server) {
         "  -s, --seed N            RNG seed                     (default 42)\n"
         "      --res 512|1024|1536 geometry resolution\n"
         "      --max-tokens N      HR token budget              (default 49152)\n"
+        "      --max-cascade-tokens N  hard post-backoff guard; 0 disables (default 0)\n"
+        "      --dense-policy MODE  fail | fallback-512 | allow (default fallback-512)\n"
         "      --bg-removal MODE   threshold | birefnet   (default: auto -- a pre-matted\n"
         "                          image keeps its alpha; otherwise BiRefNet when its model\n"
         "                          is present. The plain threshold matte cuts out specular\n"
@@ -279,6 +386,18 @@ bool parse_args(int argc, char** argv, TrellisParams& p) {
         else if (a == "-s" || a == "--seed")    { const char* v = need(a.c_str()); if (!v) return false; p.seed = (uint32_t)atoi(v); }
         else if (a == "--res")                  { const char* v = need(a.c_str()); if (!v) return false; p.set_res(atoi(v)); }
         else if (a == "--max-tokens")           { const char* v = need(a.c_str()); if (!v) return false; p.max_tokens = atoi(v); }
+        else if (a == "--max-cascade-tokens")   { const char* v = need(a.c_str()); if (!v) return false;
+                                                  std::string error;
+                                                  if (!set_density_option(a, v, p, error)) {
+                                                      fprintf(stderr, "[trellis] %s\n", error.c_str());
+                                                      return false;
+                                                  } }
+        else if (a == "--dense-policy")         { const char* v = need(a.c_str()); if (!v) return false;
+                                                  std::string error;
+                                                  if (!set_density_option(a, v, p, error)) {
+                                                      fprintf(stderr, "[trellis] %s\n", error.c_str());
+                                                      return false;
+                                                  } }
         else if (a == "--bg-removal")           { const char* v = need(a.c_str()); if (!v) return false; p.birefnet = (std::strcmp(v, "birefnet") == 0) ? 1 : 0; }
         else if (a == "--birefnet")             { p.birefnet = 1; }
         else if (a == "--no-texture")           { p.texture = false; }
@@ -312,9 +431,10 @@ bool parse_args(int argc, char** argv, TrellisParams& p) {
         else if (positional == 1)               { p.output = a; positional = 2; }
         else                                    { fprintf(stderr, "[trellis] unexpected argument: %s\n", a.c_str()); return false; }
     }
-    std::string sampler_error;
-    if (!validate_sampler_params(p, sampler_error)) {
-        fprintf(stderr, "[trellis] %s\n", sampler_error.c_str());
+    std::string validation_error;
+    if (!validate_sampler_params(p, validation_error) ||
+        !validate_density_params(p, validation_error)) {
+        fprintf(stderr, "[trellis] %s\n", validation_error.c_str());
         return false;
     }
     return true;
