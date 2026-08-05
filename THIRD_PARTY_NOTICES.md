@@ -561,8 +561,10 @@ model. In the standard runtime bundle:
 
 - Microsoft TRELLIS.2 and TRELLIS-image-large model materials are MIT-licensed.
 - ZhengPeng7/BiRefNet model materials are MIT-licensed.
-- DINOv3 model materials use Meta's custom DINOv3 license, which permits
-  commercial use but includes redistribution, trade-control, and prohibited-use
-  conditions: https://github.com/facebookresearch/dinov3/blob/main/LICENSE.md
+- DINOv3 model materials use Meta's custom DINOv3 license. It grants rights
+  to use, reproduce, distribute, copy, create derivative works of, and modify
+  the materials without a noncommercial-only clause, subject to its
+  redistribution, trade-control, restricted-end-use, and other conditions:
+  https://github.com/facebookresearch/dinov3/blob/main/LICENSE.md
 
 Do not infer a model file's license from this repository's root `LICENSE`.
