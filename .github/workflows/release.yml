@@ -197,6 +197,7 @@ jobs:
                 src="$(find "$cuda_root" -type f -name "${dll}_*.dll" -print -quit)"
                 if [ -z "$src" ]; then echo "ERROR: ${dll}_*.dll not found under CUDA toolkit"; exit 1; fi
                 cp "$src" dist/
+                cmp -- "$src" "dist/$(basename "$src")"
               done
               ls -la dist/*.dll
             fi
@@ -220,8 +221,22 @@ jobs:
             # copy its redistributable runtime only after the project ELF patch.
             if [ "${{ matrix.backend }}" = "cuda" ]; then
               cuda_lib="${CUDA_PATH:-/usr/local/cuda}/lib64"
+              shopt -s nullglob
               for l in libcudart libcublas libcublasLt; do
-                cp -P "$cuda_lib"/$l.so* dist/ 2>/dev/null || true
+                files=( "$cuda_lib"/"$l".so* )
+                if ((${#files[@]} == 0)); then
+                  echo "ERROR: $l.so* not found under $cuda_lib" >&2
+                  exit 1
+                fi
+                cp -P -- "${files[@]}" dist/
+                for src in "${files[@]}"; do
+                  dst="dist/$(basename "$src")"
+                  if [[ -L "$src" ]]; then
+                    test "$(readlink "$src")" = "$(readlink "$dst")"
+                  else
+                    cmp -- "$src" "$dst"
+                  fi
+                done
               done
             fi
             ASSET="trellis-${{ matrix.backend }}-linux-x64.tar.gz"
