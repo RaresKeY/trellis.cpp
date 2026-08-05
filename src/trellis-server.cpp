@@ -5,8 +5,8 @@
 //                      fields "seed", "resolution" (512/1024/1536), "bg_removal"
 //                      (threshold|birefnet), "uv" (xatlas = default, unique
 //                      chart space; box = faster projection), "band" (narrow-band
-//                      DC remesh band width), and per-stage sampler overrides.
-//                      Returns model/gltf-binary.
+//                      DC remesh band width), per-stage sampler overrides, and
+//                      "c2s_diagnostics" (on/off). Returns model/gltf-binary.
 //
 // Launch-time defaults come from CLI flags (see trellis::parse_args);
 // each request copies those defaults and applies its own overrides. The model
@@ -148,6 +148,19 @@ int main(int argc, char** argv) {
         if (!trellis::validate_sampler_params(p, sampler_error)) {
             set_json_error(res, 400, sampler_error);
             return;
+        }
+        if (req.has_file("c2s_diagnostics")) {
+            const std::string& value = req.get_file_value("c2s_diagnostics").content;
+            if (value == "on" || value == "1" || value == "true") {
+                p.c2s_diagnostics = true;
+            } else if (value == "off" || value == "0" || value == "false") {
+                p.c2s_diagnostics = false;
+            } else {
+                set_json_error(
+                    res, 400,
+                    "invalid c2s_diagnostics; use on/off, true/false, or 1/0");
+                return;
+            }
         }
 
         const std::string stem = temp_stem();
