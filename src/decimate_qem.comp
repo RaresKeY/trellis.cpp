@@ -1,3 +1,7 @@
+// Portions derived from JeffreyXiang/CuMesh.
+// Copyright (c) 2025 Jianfeng XIANG.
+// Licensed under MIT; see THIRD_PARTY_NOTICES.md.
+// Modified for trellis.cpp in 2026.
 #version 450
 // GPU compute kernels for the CuMesh QEM edge-collapse simplifier, mirroring the validated
 // CPU port in decimate_qem.cpp. One shader module, four kernels selected by pc.kernel; the
