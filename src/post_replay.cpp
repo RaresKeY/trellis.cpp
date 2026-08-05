@@ -4,7 +4,7 @@
 // post-processing.
 //
 //   post-replay <dump.bin> <out.glb> [--box-uv] [--faces N] [--atlas T]
-//               [--also-atlas T] [--webp on|off] [--decim GRID]
+//               [--also-atlas T] [--webp on|off] [--meshopt] [--decim GRID]
 //               [--no-weld] [--no-fill]
 #include "uv_bake.h"
 #include "tri_bvh.h"
@@ -31,7 +31,8 @@ static void print_usage(FILE* stream, const char* argv0) {
         "\n"
         "options:\n"
         "  --box-uv          use box-projected UVs\n"
-        "  --faces N         QEM target face count (default 300000)\n"
+        "  --faces N         target face count (default 300000)\n"
+        "  --meshopt          use guarded meshoptimizer simplification; QEM is the default\n"
         "  --atlas T         primary texture atlas size (default 2048)\n"
         "  --also-atlas T    write a second GLB from the same mesh at atlas size T\n"
         "  --webp on|off     request WebP textures or force PNG (default on; PNG fallback)\n"
@@ -89,7 +90,7 @@ int main(int argc, char** argv) {
     const char* dump = argv[1];
     const char* out = argv[2];
     bool boxuv = false, do_weld = true, do_fill = true, do_bake = true, do_remesh = true, do_snap = true;
-    bool use_webp = true;
+    bool use_webp = true, use_meshopt = false, decim_set = false;
     int band = 1;
     int faces_target = 300000, atlas = 2048, also_atlas = 0, decim = -1;
     for (int i = 3; i < argc; ++i) {
@@ -121,8 +122,11 @@ int main(int argc, char** argv) {
                 fprintf(stderr, "--webp must be on or off, got '%s'\n", value.c_str());
                 return 2;
             }
+        } else if (a == "--meshopt") {
+            use_meshopt = true;
         } else if (a == "--decim") {
             if (!parse_next_int(INT_MIN, INT_MAX, decim)) return 2;
+            decim_set = true;
         } else if (a == "--no-weld") do_weld = false;
         else if (a == "--no-fill") do_fill = false;
         else if (a == "--no-bake") do_bake = false;
@@ -137,6 +141,10 @@ int main(int argc, char** argv) {
             fprintf(stderr, "unknown option: %s\n", a.c_str());
             return 2;
         }
+    }
+    if (use_meshopt && decim_set) {
+        fprintf(stderr, "--meshopt cannot be combined with --decim\n");
+        return 2;
     }
 
     FILE* f = fopen(dump, "rb");
@@ -187,9 +195,25 @@ int main(int argc, char** argv) {
     if (decim > 0) trellis::decimate_cluster(sverts, (int)sverts.size()/3, sfaces, (int)sfaces.size()/3, {}, decim, dv, df, dp);
     else if (decim == 0) { dv = sverts; df = sfaces; }
     else {
-        // match the CLI: faithful QEM port (not the old meshopt/FQMS decimate_simplify)
-        trellis::decimate_qem(sverts, (int)sverts.size()/3, sfaces, (int)sfaces.size()/3, faces_target, dv, df);
-        audit("decimate_qem", df);
+        if (use_meshopt) {
+            trellis::decimate_simplify(
+                sverts, (int)sverts.size()/3, sfaces, (int)sfaces.size()/3,
+                faces_target, dv, df, trellis::SimplifyFallback::None);
+            audit("decimate_meshopt", df);
+            const int actual_faces = (int)df.size() / 3;
+            if (actual_faces > faces_target) {
+                fprintf(stderr,
+                        "warning: guarded meshoptimizer stopped at %d faces "
+                        "(target %d); no FQMS fallback was used\n",
+                        actual_faces, faces_target);
+            }
+        } else {
+            // Match the CLI's faithful CuMesh QEM port.
+            trellis::decimate_qem(
+                sverts, (int)sverts.size()/3, sfaces, (int)sfaces.size()/3,
+                faces_target, dv, df);
+            audit("decimate_qem", df);
+        }
         trellis::weld_vertices(dv, df, nullptr, 1.0f / ((float)res * 8.0f));
         audit("weld2", df);
         trellis::fill_small_holes(df);
