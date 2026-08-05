@@ -14,9 +14,9 @@ enum class MeshoptAdaptiveMode {
 
 struct MeshoptAdaptiveOptions {
     MeshoptAdaptiveMode mode = MeshoptAdaptiveMode::ErrorOnly;
-    // Bounded mode never intentionally goes below min_faces. It first computes
-    // the quality result under the error budget, then explicitly forces toward
-    // max_faces if needed while retaining both counts in the report.
+    // Bounded mode protects min_faces by retrying from the original mesh when
+    // a batched collapse would cross it. max_faces is then enforced explicitly
+    // when reachable without violating that floor.
     int min_faces = 0;
     int max_faces = 0;
     float max_error_percent = 1.0f;
@@ -26,12 +26,13 @@ struct MeshoptAdaptiveReport {
     int input_faces = 0;
     int quality_faces = 0;
     int output_faces = 0;
+    int forced_attempt_faces = -1;
     float requested_error_percent = 0.0f;
     float result_error_percent = 0.0f;
     float mesh_extent = 0.0f;
     float result_error_units = 0.0f;
     bool forced = false;
-    bool min_met = true;
+    bool min_met = true;  // bounded helper guarantees this for valid input
     bool met_max = true;
     bool error_met = true;
     bool no_progress = false;
@@ -42,9 +43,10 @@ struct MeshoptAdaptiveReport {
 // cheapest legal collapses until max_error_percent or topology stops it.
 //
 // Bounded: first compute the quality result toward min_faces under the error
-// limit. If it remains above max_faces, explicitly re-run from the original
-// mesh to max_faces without an error cap. The report retains quality_faces and
-// marks forced/error_met so the count-vs-quality tradeoff is never silent.
+// limit, retrying from the original with a raised internal target if a batched
+// collapse would cross the protected floor. If the result remains above
+// max_faces, explicitly re-run from the original mesh to max_faces without an
+// error cap, with the same floor protection. The report retains both counts.
 MeshoptAdaptiveReport decimate_meshopt_adaptive(
     const std::vector<float>& verts, int V,
     const std::vector<int32_t>& faces, int F,
