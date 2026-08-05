@@ -183,7 +183,7 @@ int trellis_run(const trellis::TrellisParams& cfg) {
 
     const bool do_tex = cfg.texture;
 
-    // one shape SLAT flow run -> normalized [32,n] (sparse, CFG 7.5, gi[0.6,1], rescale_t 3)
+    // One shape SLAT flow run with the resolved per-request sampler parameters.
     auto shape_flow = [&](const std::string& path, const vector<std::array<int,3>>& cds,
                           const float* cnd, const float* ncnd, int lc) {
         const int n = (int)cds.size();
