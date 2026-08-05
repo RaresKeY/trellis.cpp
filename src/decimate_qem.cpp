@@ -1,3 +1,7 @@
+// Portions derived from JeffreyXiang/CuMesh.
+// Copyright (c) 2025 Jianfeng XIANG.
+// Licensed under MIT; see THIRD_PARTY_NOTICES.md.
+// Modified for trellis.cpp in 2026.
 // CPU port of CuMesh's QEM edge-collapse simplifier (refs/CuMesh/src/simplify.cu +
 // dtypes.cuh QEM). Faithful to the reference: Garland-Heckbert vertex quadrics, an
 // edge-collapse cost of QEM(v_new) + lambda_edge_length*|e|^2 + lambda_skinny*skinny*|e|^2
