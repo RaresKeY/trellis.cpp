@@ -112,6 +112,8 @@ The most useful ones:
 | flag | effect |
 |------|--------|
 | `--res 512\|1024\|1536` | geometry resolution (512 = light path, no cascade) |
+| `--max-cascade-tokens N` | optional post-backoff cascade token guard; `0` disables it (default) |
+| `--dense-policy MODE` | action above the guard: `fail`, `fallback-512`, or `allow` |
 | `--bg-removal threshold\|birefnet` | default **auto**: pre-matted images keep their alpha, otherwise the BiRefNet matte (~13s on GPU). The plain white-bg keyer cuts specular highlights out of the alpha — the flow then generates holes there — so it is opt-in only |
 | `--no-texture` | geometry only |
 | `--decim GRID` | legacy cluster-grid decimation (default: quadric simplify to 300K faces @1024 / 150K @512; `0` = keep the full-res mesh) |
@@ -142,6 +144,20 @@ Steps must be in 1–1000. Guidance must be finite and non-negative; guidance
 rescale must be finite and in `[0,1]`; interval endpoints must satisfy
 `0 <= start <= end <= 1`; time rescale must be finite and positive. Malformed
 numbers are rejected instead of being interpreted as zero.
+
+### Cascade density guard
+
+The cascade guard is disabled by default, so normal generation and quality are
+unchanged. When `--max-cascade-tokens N` is nonzero, TRELLIS checks the exact
+quantized token count after its normal resolution backoff and before the
+high-resolution shape flow.
+
+`--dense-policy fail` refuses the run, `fallback-512` reuses the already computed
+low-resolution SLAT and resolves every downstream model, atlas, and decimation
+choice to the 512 pipeline, and `allow` records the overflow but continues.
+The server accepts `max_cascade_tokens` and `dense_policy`; invalid values return
+HTTP 400, while a valid `fail` policy that trips returns HTTP 422. Hardware-specific
+limits should be configured by the deployment rather than baked into the library.
 
 The postprocess matches the reference pipeline op for op (see
 `docs/spec/27-reference-postprocess.md` / `28-divergence-matrix.md`): the raw
@@ -179,6 +195,7 @@ explicit strength/interval names: `sparse_steps`,
 `sparse_guidance_interval_start`, `sparse_guidance_interval_end`, and
 `sparse_rescale_t`, with equivalent `shape_*` and `texture_*` fields.
 Invalid sampler overrides return HTTP 400 before image staging or model work.
+The density equivalents are `max_cascade_tokens` and `dense_policy`.
 
 ## Pipeline
 
