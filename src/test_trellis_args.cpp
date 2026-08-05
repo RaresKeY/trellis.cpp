@@ -152,6 +152,9 @@ int main() {
         CHECK(trellis::validate_density_params(p, error));
 
         CHECK(trellis::set_density_option(
+            "--max-1024-tokens", "17000", p, error));
+        CHECK(p.max_cascade_tokens == 17000);
+        CHECK(trellis::set_density_option(
             "--max-cascade-tokens", "18000", p, error));
         CHECK(trellis::set_density_option(
             "dense_policy", "fail", p, error));
