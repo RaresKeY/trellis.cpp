@@ -303,6 +303,16 @@ int main(int argc, char** argv) {
         dv = sverts;
         df = sfaces;
     } else {
+        const int reducer_input_faces = (int)sfaces.size() / 3;
+        const bool adaptive_meshopt =
+            use_meshopt && stop_mode != StopMode::Target;
+        if (stop_mode == StopMode::Range &&
+            min_faces > reducer_input_faces) {
+            fprintf(stderr,
+                    "--min-faces (%d) exceeds reducer input faces (%d)\n",
+                    min_faces, reducer_input_faces);
+            return 2;
+        }
         if (!use_meshopt) {
             // Match the CLI's faithful CuMesh QEM port.
             trellis::decimate_qem(
@@ -340,9 +350,10 @@ int main(int argc, char** argv) {
                   df);
             if (!report.met_max) {
                 fprintf(stderr,
-                        "warning: topology guards stopped range at %d faces, "
-                        "above max %d (quality candidate %d)\n",
-                        report.output_faces, max_faces, report.quality_faces);
+                        "warning: requested band [%d, %d] was unreachable; "
+                        "kept %d faces (quality candidate %d)\n",
+                        min_faces, max_faces, report.output_faces,
+                        report.quality_faces);
             } else if (report.forced && !report.error_met) {
                 fprintf(stderr,
                         "warning: max %d forced the range output past %.4f%% "
@@ -350,18 +361,25 @@ int main(int argc, char** argv) {
                         max_faces, error_percent, report.quality_faces);
             } else if (report.no_progress) {
                 fprintf(stderr,
-                        "warning: meshoptimizer made no progress at %.4f%% error; "
-                        "topology or the error guard blocked every collapse\n",
-                        error_percent);
+                        "warning: meshoptimizer made no progress at %.4f%% "
+                        "error (%s)\n",
+                        error_percent, report.stop_reason);
             }
         }
-        trellis::weld_vertices(dv, df, nullptr, 1.0f / ((float)res * 8.0f));
-        audit("weld2", df);
-        trellis::fill_small_holes(df);
-        audit("fill2", df);
-        int ndrop2 = trellis::drop_small_components(dv, df, 0.03f);
-        if (ndrop2) printf("  dropped %d more comps\n", ndrop2);
-        audit("drop2", df);
+        if (adaptive_meshopt) {
+            // Input was already welded/filled/remeshed/cleaned. Preserve the
+            // policy's exact triangle count and error report; do not silently
+            // prune components or thin features after the adaptive reducer.
+            audit("meshopt_policy_final", df);
+        } else {
+            trellis::weld_vertices(dv, df, nullptr, 1.0f / ((float)res * 8.0f));
+            audit("weld2", df);
+            trellis::fill_small_holes(df);
+            audit("fill2", df);
+            int ndrop2 = trellis::drop_small_components(dv, df, 0.03f);
+            if (ndrop2) printf("  dropped %d more comps\n", ndrop2);
+            audit("drop2", df);
+        }
     }
     printf("  [decimate %.1fs]\n", now()-t); t = now();
     if (!do_bake) { printf("(--no-bake) done\n"); return 0; }
