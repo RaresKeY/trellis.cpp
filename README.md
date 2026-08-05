@@ -120,6 +120,29 @@ The most useful ones:
 | `--seed N` | RNG seed |
 | `--require-gpu` | fail instead of falling back to the (very slow, RAM-hungry) CPU path |
 
+### Sampler controls
+
+The stock sampler schedule is unchanged unless one of these options is set:
+
+| stage | steps | guidance | guidance rescale | guidance interval | time rescale |
+|---|---:|---:|---:|---:|---:|
+| sparse structure | 12 | 7.5 | 0.7 | 0.6–1.0 | 5.0 |
+| shape SLAT | 12 | 7.5 | 0.5 | 0.6–1.0 | 3.0 |
+| texture SLAT | 12 | 1.0 | 0.0 | 0.6–0.9 | 3.0 |
+
+Each stage accepts `--<stage>-steps`, `--<stage>-guidance`,
+`--<stage>-guidance-rescale`, `--<stage>-guidance-start`,
+`--<stage>-guidance-end`, and `--<stage>-rescale-t`. `--gss` and `--gsh`
+remain aliases for sparse and shape guidance, and the existing
+`TrellisParams::gss` / `TrellisParams::gsh` source fields remain supported.
+Shape controls apply to both the low-resolution and cascade high-resolution
+shape passes.
+
+Steps must be in 1–1000. Guidance must be finite and non-negative; guidance
+rescale must be finite and in `[0,1]`; interval endpoints must satisfy
+`0 <= start <= end <= 1`; time rescale must be finite and positive. Malformed
+numbers are rejected instead of being interpreted as zero.
+
 The postprocess matches the reference pipeline op for op (see
 `docs/spec/27-reference-postprocess.md` / `28-divergence-matrix.md`): the raw
 dual-grid mesh is welded and hole-filled, **remeshed with narrow-band UDF dual
@@ -147,7 +170,12 @@ POST /generate      multipart/form-data with an "image" file part; optional text
 ```
 
 Launch-time flags (including `--res`) set the per-request defaults; each request can
-override them with its own fields.
+override them with its own fields. Sampler multipart fields use underscores and
+explicit strength/interval names: `sparse_steps`,
+`sparse_guidance_strength`, `sparse_guidance_rescale`,
+`sparse_guidance_interval_start`, `sparse_guidance_interval_end`, and
+`sparse_rescale_t`, with equivalent `shape_*` and `texture_*` fields.
+Invalid sampler overrides return HTTP 400 before image staging or model work.
 
 ## Pipeline
 
