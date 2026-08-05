@@ -1,3 +1,7 @@
+// Portions derived from JeffreyXiang/CuMesh.
+// Copyright (c) 2025 Jianfeng XIANG.
+// Licensed under MIT; see THIRD_PARTY_NOTICES.md.
+// Modified for trellis.cpp in 2026.
 #include "uv_bake.h"
 #include "xatlas.h"
 #include "meshoptimizer.h"
@@ -118,6 +122,10 @@ void dilate_full(std::vector<uint8_t>& base, std::vector<uint8_t>& mr, std::vect
     }
 }
 
+// Derived from OpenCV modules/photo/src/inpaint.cpp.
+// Copyright (C) 2000 Intel Corporation.
+// Modified for trellis.cpp in 2026.
+// See THIRD_PARTY_NOTICES.md for applicable notices and license terms.
 // CPU port of cv2.INPAINT_TELEA (Telea 2004, OpenCV icvTeleaInpaintFMM),
 // matching the reference's texture gutter fill (postprocess.py: radius 3 for
 // base color, 1 for metallic-roughness). Unknown texels are visited in
