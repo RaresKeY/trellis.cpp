@@ -147,6 +147,65 @@ int main() {
 
     {
         trellis::TrellisParams p;
+        CHECK(p.cascade && !p.direct_1024 && p.hr_res == 1024);
+        CHECK(std::string(trellis::pipeline_name(p)) == "1024-cascade");
+        CHECK(trellis::validate_pipeline_params(p, error));
+
+        CHECK(trellis::set_pipeline_option("1024-direct", p, error));
+        CHECK(!p.cascade && p.direct_1024 && p.hr_res == 1024);
+        CHECK(std::string(trellis::pipeline_name(p)) == "1024-direct");
+        CHECK(trellis::validate_pipeline_params(p, error));
+
+        p.set_res(1024);
+        CHECK(p.cascade && !p.direct_1024 && p.hr_res == 1024);
+        CHECK(std::string(trellis::pipeline_name(p)) == "1024-cascade");
+
+        CHECK(trellis::set_pipeline_option("1024", p, error));
+        CHECK(p.direct_1024 && !p.cascade);
+        CHECK(trellis::set_pipeline_option("1024_cascade", p, error));
+        CHECK(p.cascade && !p.direct_1024);
+
+        CHECK(trellis::set_resolution_option("512", p, error));
+        CHECK(!p.cascade && !p.direct_1024 && p.hr_res == 512);
+        CHECK(!trellis::set_resolution_option("1024junk", p, error));
+        CHECK(!trellis::set_resolution_option(" 1024", p, error));
+        CHECK(!trellis::set_resolution_option("1024 ", p, error));
+        CHECK(!trellis::set_resolution_option("768", p, error));
+        CHECK(!trellis::set_pipeline_option("1024-direct-junk", p, error));
+    }
+    {
+        trellis::TrellisParams by_res;
+        CHECK(parse({"test", "--res", "1024"}, by_res));
+        CHECK(by_res.cascade && !by_res.direct_1024 && by_res.hr_res == 1024);
+
+        trellis::TrellisParams direct;
+        CHECK(parse({"test", "--pipeline", "1024-direct"}, direct));
+        CHECK(!direct.cascade && direct.direct_1024 && direct.hr_res == 1024);
+
+        trellis::TrellisParams conflict_a;
+        CHECK(!parse({"test", "--res", "1024",
+                      "--pipeline", "1024-direct"}, conflict_a));
+        trellis::TrellisParams conflict_b;
+        CHECK(!parse({"test", "--pipeline", "1024-direct",
+                      "--res", "1024"}, conflict_b));
+        trellis::TrellisParams bad_res;
+        CHECK(!parse({"test", "--res", "1024junk"}, bad_res));
+    }
+    {
+        trellis::TrellisParams invalid;
+        invalid.direct_1024 = true;  // Contradictory with default cascade=true.
+        CHECK(!trellis::validate_pipeline_params(invalid, error));
+
+        trellis::TrellisParams direct;
+        CHECK(trellis::set_pipeline_option("1024-direct", direct, error));
+        direct.tex_res = 512;
+        CHECK(!trellis::validate_pipeline_params(direct, error));
+        direct.tex_res = 1024;
+        CHECK(trellis::validate_pipeline_params(direct, error));
+    }
+
+    {
+        trellis::TrellisParams p;
         CHECK(p.max_cascade_tokens == 0);
         CHECK(p.dense_policy == trellis::DensePolicy::Fallback512);
         CHECK(trellis::validate_density_params(p, error));
@@ -235,6 +294,6 @@ int main() {
     }
 
     if (failures) return 1;
-    std::puts("sampler argument tests passed");
+    std::puts("argument tests passed");
     return 0;
 }
