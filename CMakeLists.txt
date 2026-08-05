@@ -130,9 +130,17 @@ if(TRELLIS_WEBP)
   set(WEBP_BUILD_LIBWEBPMUX OFF CACHE BOOL "" FORCE)
   set(BUILD_SHARED_LIBS_SAVED ${BUILD_SHARED_LIBS})
   set(BUILD_SHARED_LIBS OFF)
+  # DOWNLOAD_EXTRACT_TIMESTAMP was added in CMake 3.24. Keep the declared
+  # 3.18 minimum working; older CMake versions retain archive timestamps.
+  set(TRELLIS_WEBP_FETCH_TIMESTAMP_ARGS)
+  if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.24)
+    list(APPEND TRELLIS_WEBP_FETCH_TIMESTAMP_ARGS
+      DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  endif()
   FetchContent_Declare(libwebp
     URL https://github.com/webmproject/libwebp/archive/refs/tags/v1.5.0.tar.gz
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+    URL_HASH SHA256=668c9aba45565e24c27e17f7aaf7060a399f7f31dba6c97a044e1feacb930f37
+    ${TRELLIS_WEBP_FETCH_TIMESTAMP_ARGS})
   FetchContent_MakeAvailable(libwebp)
   set(BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS_SAVED})
   target_compile_definitions(trellis_core PRIVATE TRELLIS_HAVE_WEBP)
