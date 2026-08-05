@@ -129,7 +129,7 @@ int trellis_run(const trellis::TrellisParams& cfg) {
     vector<float> chw, chw1024;
     std::vector<unsigned char> cutout; int cut_sz = 0;   // the bg-removal result (for --dump-bg / --bg-only)
     if (birefnet) {
-        printf("[1/6] preprocess %s (BiRefNet bg removal, %s)\n", img.c_str(), cascade ? "1024 cascade" : "512");
+        printf("[1/6] preprocess %s (BiRefNet bg removal, %s)\n", img.c_str(), requested_pipeline.c_str());
         // Full BiRefNet (Swin-L backbone + deformable-conv decoder) runs on the GPU. Cutout computed
         // once, normalized for 512 and 1024.
         trellis::Model bm = trellis::Model::load(M + "/birefnet.gguf", gpu);
@@ -139,7 +139,7 @@ int trellis_run(const trellis::TrellisParams& cfg) {
         chw = trellis::normalize_cutout(cutout, cut_sz, 512);
         if (cascade) chw1024 = trellis::normalize_cutout(cutout, cut_sz, 1024);
     } else {
-        printf("[1/6] preprocess %s (%s)\n", img.c_str(), cascade ? "1024 cascade" : "512");
+        printf("[1/6] preprocess %s (%s)\n", img.c_str(), requested_pipeline.c_str());
         cutout = trellis::threshold_cutout(img, cut_sz);
         if (cutout.empty()) return 1;
         chw = trellis::normalize_cutout(cutout, cut_sz, 512);
