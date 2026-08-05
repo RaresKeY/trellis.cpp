@@ -26,8 +26,8 @@
   "bundle": {
     "active": true,
     "resources": {
-      "../../LICENSE": "licenses/LICENSE",
-      "../../THIRD_PARTY_NOTICES.md": "licenses/THIRD_PARTY_NOTICES.md"
+      "../../LICENSE": "LICENSE",
+      "../../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md"
     },
     "targets": ["deb", "appimage", "nsis"],
     "icon": [
