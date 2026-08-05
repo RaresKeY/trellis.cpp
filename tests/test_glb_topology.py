@@ -33,6 +33,21 @@ def pad4(payload: bytes, fill: bytes) -> bytes:
     return payload + fill * ((-len(payload)) % 4)
 
 
+def write_document_glb(path: Path, document: object, binary: bytes = b"") -> Path:
+    json_payload = pad4(
+        json.dumps(document, separators=(",", ":")).encode("utf-8"), b" "
+    )
+    binary_payload = pad4(binary, b"\0")
+    chunks = (
+        struct.pack("<II", len(json_payload), JSON_CHUNK)
+        + json_payload
+        + struct.pack("<II", len(binary_payload), BIN_CHUNK)
+        + binary_payload
+    )
+    path.write_bytes(struct.pack("<4sII", b"glTF", 2, 12 + len(chunks)) + chunks)
+    return path
+
+
 def write_glb(
     path: Path,
     positions: list[tuple[float, float, float]],
@@ -101,18 +116,7 @@ def write_glb(
     if extensions_required:
         document["extensionsRequired"] = list(extensions_required)
 
-    json_payload = pad4(
-        json.dumps(document, separators=(",", ":")).encode("utf-8"), b" "
-    )
-    binary_payload = pad4(binary, b"\0")
-    chunks = (
-        struct.pack("<II", len(json_payload), JSON_CHUNK)
-        + json_payload
-        + struct.pack("<II", len(binary_payload), BIN_CHUNK)
-        + binary_payload
-    )
-    path.write_bytes(struct.pack("<4sII", b"glTF", 2, 12 + len(chunks)) + chunks)
-    return path
+    return write_document_glb(path, document, binary)
 
 
 def seam_split_tetrahedron() -> tuple[
@@ -125,6 +129,48 @@ def seam_split_tetrahedron() -> tuple[
         positions.extend(TETRA_POSITIONS[index] for index in face)
         faces.append((base, base + 1, base + 2))
     return positions, faces
+
+
+def accessor_document() -> tuple[dict, bytes]:
+    position_bytes = b"".join(
+        struct.pack("<3f", *position) for position in TETRA_POSITIONS[:3]
+    )
+    index_bytes = struct.pack("<3H", 0, 1, 2)
+    binary = position_bytes + index_bytes
+    document = {
+        "asset": {"version": "2.0"},
+        "buffers": [{"byteLength": len(binary)}],
+        "bufferViews": [
+            {"buffer": 0, "byteOffset": 0, "byteLength": len(position_bytes)},
+            {
+                "buffer": 0,
+                "byteOffset": len(position_bytes),
+                "byteLength": len(index_bytes),
+            },
+        ],
+        "accessors": [
+            {
+                "bufferView": 0,
+                "componentType": 5126,
+                "count": 3,
+                "type": "VEC3",
+            },
+            {
+                "bufferView": 1,
+                "componentType": 5123,
+                "count": 3,
+                "type": "SCALAR",
+            },
+        ],
+        "meshes": [
+            {
+                "primitives": [
+                    {"attributes": {"POSITION": 0}, "indices": 1, "mode": 4}
+                ]
+            }
+        ],
+    }
+    return document, binary
 
 
 class GlbTopologyTest(unittest.TestCase):
@@ -254,6 +300,50 @@ class GlbTopologyTest(unittest.TestCase):
         self.assertIn(str(valid), result.stdout)
         self.assertIn(str(invalid), result.stdout)
         self.assertNotIn("Traceback", result.stdout + result.stderr)
+
+    def test_non_object_json_is_a_clean_input_error(self) -> None:
+        path = write_document_glb(self.directory / "json-array.glb", [])
+
+        result = self.run_tool(path)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("GLB JSON chunk must be an object", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_malformed_accessor_spans_are_rejected_before_unpacking(self) -> None:
+        cases = (
+            ("zero-stride", "view", "byteStride", 0, "byteStride is smaller"),
+            (
+                "huge-count",
+                "accessor",
+                "count",
+                1_000_000_000,
+                "accessor exceeds its bufferView",
+            ),
+            (
+                "negative-offset",
+                "view",
+                "byteOffset",
+                -1,
+                "byteOffset must be a non-negative integer",
+            ),
+        )
+        for name, target, key, value, expected in cases:
+            with self.subTest(name=name):
+                document, binary = accessor_document()
+                if target == "view":
+                    document["bufferViews"][0][key] = value
+                else:
+                    document["accessors"][0][key] = value
+                path = write_document_glb(
+                    self.directory / f"{name}.glb", document, binary
+                )
+
+                result = self.run_tool(path)
+
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(expected, result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
 
     def test_invalid_weld_tolerance_is_a_usage_error(self) -> None:
         path = write_glb(
