@@ -60,10 +60,14 @@ int trellis_run(const trellis::TrellisParams& cfg) {
     if (cfg.c2s_diagnostics)
         fprintf(stderr, "[c2s-config] diagnostics=on\n");
 
-    std::string sampler_error;
-    if (!trellis::validate_sampler_params(cfg, sampler_error)) {
-        fprintf(stderr, "[trellis] invalid sampler parameters: %s\n", sampler_error.c_str());
-        return 2;
+    std::string validation_error;
+    if (!trellis::validate_sampler_params(cfg, validation_error)) {
+        fprintf(stderr, "[trellis] invalid sampler parameters: %s\n", validation_error.c_str());
+        return trellis::kRunInvalidParams;
+    }
+    if (!trellis::validate_density_params(cfg, validation_error)) {
+        fprintf(stderr, "[trellis] invalid density parameters: %s\n", validation_error.c_str());
+        return trellis::kRunInvalidParams;
     }
     fprintf(stderr,
             "[sampler] sparse steps=%d guidance=%.6g rescale=%.6g interval=[%.6g,%.6g] rescale_t=%.6g\n",
@@ -99,7 +103,9 @@ int trellis_run(const trellis::TrellisParams& cfg) {
     const std::string& outglb = cfg.output;
     const std::string& M = cfg.models;
     const int gpu = cfg.gpu;
-    const bool cascade = cfg.cascade;   // 1024 cascade is the TRELLIS default; --res 512 forces the light path
+    const bool cascade = cfg.cascade;   // requested path; the density guard may resolve it to 512
+    const std::string requested_pipeline =
+        cascade ? std::to_string(cfg.hr_res) + "_cascade" : "512";
     std::mt19937 rng(run_seed); std::normal_distribution<float> randn(0.f, 1.f);
     auto noise = [&](size_t n){ vector<float> v(n); for (auto& x : v) x = randn(rng); return v; };
     double t0 = now();
@@ -220,6 +226,22 @@ int trellis_run(const trellis::TrellisParams& cfg) {
     const float* neg_dec  = neg.data();
     int Lc_dec = Lc;
     vector<float> lr_norm, lr_dn;            // LR (res-512) shape slat @res32 — reused for the res-512 tex path
+    bool resolved_cascade = cascade;
+    int observed_cascade_tokens = 0;
+    std::string resolved_pipeline = requested_pipeline;
+    trellis::DenseGuardAction guard_action =
+        cascade ? trellis::DenseGuardAction::Disabled
+                : trellis::DenseGuardAction::NotApplicable;
+    auto log_resolution = [&]() {
+        printf("[trellis] resolution requested=%s resolved=%s "
+               "cascade_tokens=%d max_cascade_tokens=%d "
+               "dense_policy=%s guard=%s\n",
+               requested_pipeline.c_str(), resolved_pipeline.c_str(),
+               observed_cascade_tokens, cfg.max_cascade_tokens,
+               trellis::dense_policy_name(cfg.dense_policy),
+               trellis::dense_guard_action_name(guard_action));
+    };
+
     if (cascade) {
         // Cascade target resolution: 1024 (default, '1024_cascade') or e.g. 1536 ('1536_cascade').
         // Both reuse the SAME shape_flow_1024 / tex_flow_1024 / cond_1024 — only the HR quantization
@@ -256,28 +278,73 @@ int trellis_run(const trellis::TrellisParams& cfg) {
             for (auto& c : hr_coords) q.insert({ (int)((c[0]+0.5f)/512.f*g), (int)((c[1]+0.5f)/512.f*g), (int)((c[2]+0.5f)/512.f*g) });
             if ((int)q.size() < max_tok || hr_res <= 1024) {
                 shc.assign(q.begin(), q.end());
+                observed_cascade_tokens = static_cast<int>(shc.size());
                 printf("      upsampled coords @res512=%d -> quantized @res%d (grid %d) = %d tokens\n",
-                       (int)hr_coords.size(), hr_res, gi, (int)shc.size());
+                       (int)hr_coords.size(), hr_res, gi, observed_cascade_tokens);
                 break;
             }
             printf("      res%d (grid %d) -> %d tokens >= %d, backing off -128\n",
                    hr_res, gi, (int)q.size(), max_tok);
             hr_res -= 128;
         }
-        // (4) HR shape flow @res(hr_res//16) with cond_1024
-        slat_norm = shape_flow(M + "/shape_flow_1024.gguf", shc, cond1024.data(), neg1024.data(), Lc1024);
-        RES = hr_res; cond_dec = cond1024.data(); neg_dec = neg1024.data(); Lc_dec = Lc1024;
+        const trellis::DenseGuardDecision guard = trellis::resolve_dense_guard(
+            /*requested_cascade=*/true, hr_res, observed_cascade_tokens,
+            cfg.max_cascade_tokens, cfg.dense_policy);
+        guard_action = guard.action;
+        resolved_cascade = guard.resolved_cascade;
+
+        if (!guard.proceed) {
+            resolved_pipeline = "refused";
+            fprintf(stderr,
+                    "[trellis] cascade density guard refused %d tokens "
+                    "(limit %d, policy fail)\n",
+                    observed_cascade_tokens, cfg.max_cascade_tokens);
+            log_resolution();
+            return trellis::kRunCascadeDensityExceeded;
+        }
+
+        if (!resolved_cascade) {
+            fprintf(stderr,
+                    "[trellis] cascade density guard: %d tokens exceed limit %d; "
+                    "falling back to 512\n",
+                    observed_cascade_tokens, cfg.max_cascade_tokens);
+            shc = coords;
+            slat_norm = lr_norm;
+            RES = 512;
+            cond_dec = cond.data();
+            neg_dec = neg.data();
+            Lc_dec = Lc;
+            resolved_pipeline = "512";
+        } else {
+            if (guard.action == trellis::DenseGuardAction::Allow) {
+                fprintf(stderr,
+                        "[trellis] cascade density guard: %d tokens exceed limit %d; "
+                        "continuing because policy is allow\n",
+                        observed_cascade_tokens, cfg.max_cascade_tokens);
+            }
+            // (4) HR shape flow @res(hr_res//16) with cond_1024
+            slat_norm = shape_flow(
+                M + "/shape_flow_1024.gguf", shc,
+                cond1024.data(), neg1024.data(), Lc1024);
+            RES = guard.resolved_resolution;
+            cond_dec = cond1024.data();
+            neg_dec = neg1024.data();
+            Lc_dec = Lc1024;
+            resolved_pipeline = std::to_string(RES) + "_cascade";
+        }
     } else {
         printf("[4/7] shape SLAT flow (512)\n");
         shc = coords;
         slat_norm = shape_flow(M + "/shape_flow_512.gguf", coords, cond.data(), neg.data(), Lc);
     }
+    log_resolution();
+
     const int N = (int)shc.size();
     slat_dn.resize(slat_norm.size());
     for (int n = 0; n < N; ++n) for (int c = 0; c < 32; ++c)
         slat_dn[(size_t)c + 32*n] = slat_norm[(size_t)c + 32*n]*SHAPE_STD[c] + SHAPE_MEAN[c];
-    slat_stats(cascade ? "HR slat" : "slat (res32)", slat_dn);
-    if (cascade && cfg.dump_slat) {   // dump HR slat for the reference-decoder diff
+    slat_stats(resolved_cascade ? "HR slat" : "slat (res32)", slat_dn);
+    if (resolved_cascade && cfg.dump_slat) {   // dump HR slat for the reference-decoder diff
         FILE* f = fopen("/tmp/hr_slat.bin", "wb");
         if (f) {
             int n = N, res = RES; fwrite(&n, 4, 1, f); fwrite(&res, 4, 1, f);
@@ -322,8 +389,8 @@ int trellis_run(const trellis::TrellisParams& cfg) {
         // geometry detail without the speckle. Auto: drop to 512 above ~9M voxels; --tex-res forces it.
         constexpr int DENSE_TEX = 9000000;
         const int tex_res = cfg.tex_res > 0 ? cfg.tex_res
-                          : (cascade && (int)so.coords.size() > DENSE_TEX ? 512 : RES);
-        const bool mixed = cascade && tex_res != RES;   // res-1024 geometry + res-512 texture
+                          : (resolved_cascade && (int)so.coords.size() > DENSE_TEX ? 512 : RES);
+        const bool mixed = resolved_cascade && tex_res != RES;   // res-1024 geometry + res-512 texture
         printf("[6/7] texture SLAT flow + PBR decode%s\n", mixed ? "  (res-512 texture on res-1024 mesh)" : "");
 
         if (mixed) {   // decode a res-512 shape (from the LR slat) to guide the res-512 tex decode
@@ -334,7 +401,7 @@ int trellis_run(const trellis::TrellisParams& cfg) {
         }
         // tex flow + decode inputs: HR path (shc/slat_norm/cond_dec/so.subs) vs res-512 mixed path
         // (coords/lr_norm/cond_512/so_tex.subs). The tex decoder upsamples via the guide subdivision.
-        const std::string tflow = M + (mixed ? "/tex_flow_512.gguf" : (cascade ? "/tex_flow_1024.gguf" : "/tex_flow_512.gguf"));
+        const std::string tflow = M + (mixed ? "/tex_flow_512.gguf" : (resolved_cascade ? "/tex_flow_1024.gguf" : "/tex_flow_512.gguf"));
         const vector<std::array<int,3>>& tcoords = mixed ? coords : shc;
         const vector<float>& tslat = mixed ? lr_norm : slat_norm;
         const float* tcond = mixed ? cond.data() : cond_dec;
@@ -403,7 +470,7 @@ int trellis_run(const trellis::TrellisParams& cfg) {
         // xatlas's ~superlinear chart-compute (grid 384 -> 382K faces took >9min pre-decimation),
         // occlusion-aware bucket assignment + depth-tested raster keep its bleed low.
         const bool boxuv = !cfg.xatlas;
-        const int T = cfg.tex >= 0 ? cfg.tex : (cascade ? 2048 : 1024);
+        const int T = cfg.tex >= 0 ? cfg.tex : (resolved_cascade ? 2048 : 1024);
         if (const char* dp = std::getenv("TRELLIS_DUMP_POST")) {
             FILE* dfp = fopen(dp, "wb");
             if (dfp) {   // geometry mesh + the PBR volume the bake samples (may be res-512 in mixed mode)
@@ -456,7 +523,7 @@ int trellis_run(const trellis::TrellisParams& cfg) {
             dv = sverts; df = sfaces;
         } else {
             trellis::decimate_qem(sverts, (int)sverts.size()/3, sfaces, (int)sfaces.size()/3,
-                                  cascade ? 300000 : 150000, dv, df);
+                                  resolved_cascade ? 300000 : 150000, dv, df);
             trellis::weld_vertices(dv, df, nullptr, 1.0f / ((float)so.res * 8.0f));
             trellis::fill_small_holes(df);
             // Second component pass on the decimated mesh: a hallucinated ground plane
