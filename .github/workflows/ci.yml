@@ -52,6 +52,13 @@ jobs:
             bash -n "$script"
           done < <(git ls-files -z '*.sh')
 
+      - name: Test GLB topology diagnostics
+        run: >
+          python3 -m unittest discover
+          -s tests
+          -p 'test_glb_topology.py'
+          -v
+
   cpu-build:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
