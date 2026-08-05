@@ -61,6 +61,10 @@ int trellis_run(const trellis::TrellisParams& cfg) {
         fprintf(stderr, "[c2s-config] diagnostics=on\n");
 
     std::string validation_error;
+    if (!trellis::validate_pipeline_params(cfg, validation_error)) {
+        fprintf(stderr, "[trellis] invalid pipeline parameters: %s\n", validation_error.c_str());
+        return trellis::kRunInvalidParams;
+    }
     if (!trellis::validate_sampler_params(cfg, validation_error)) {
         fprintf(stderr, "[trellis] invalid sampler parameters: %s\n", validation_error.c_str());
         return trellis::kRunInvalidParams;
@@ -332,7 +336,7 @@ int trellis_run(const trellis::TrellisParams& cfg) {
             cond_dec = cond1024.data();
             neg_dec = neg1024.data();
             Lc_dec = Lc1024;
-            resolved_pipeline = std::to_string(RES) + "_cascade";
+            resolved_pipeline = std::to_string(RES) + "-cascade";
         }
     } else if (direct_1024) {
         printf("[4/7] shape SLAT flow (direct 1024, native res64 sparse structure)\n");
