@@ -341,9 +341,10 @@ licenses with any weight or GGUF bundle.
 The QEM path is a declared CuMesh port and carries CuMesh's MIT notice. CuMesh
 names PaMO (AGPL-3.0) as a reference implementation for its parallel
 simplifier; this repository has not established that copyrightable PaMO code is
-present. This does not license generated assets under AGPL, but closed-source
-software distributors should resolve that provenance question or use an
-independently licensed simplification path.
+present. That reference alone does not establish AGPL coverage of ordinary
+generated output; copyright coverage remains fact-specific if an output embeds
+covered material. Closed-source software distributors should resolve the code
+provenance question or use an independently licensed simplification path.
 
 ## Building
 
