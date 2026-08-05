@@ -12,6 +12,28 @@ extern bool g_c2s_diagnostics;  // defined in sparse.cpp
 extern bool g_no_fa;            // defined in dit.cpp           (TRELLIS_NOFA)
 extern bool g_require_gpu;      // defined in trellis_model.cpp (TRELLIS_REQUIRE_GPU)
 
+enum class DensePolicy {
+    Fail,
+    Fallback512,
+    Allow,
+};
+
+enum class DenseGuardAction {
+    NotApplicable,
+    Disabled,
+    Pass,
+    Fail,
+    Fallback512,
+    Allow,
+};
+
+struct DenseGuardDecision {
+    DenseGuardAction action = DenseGuardAction::NotApplicable;
+    bool proceed = true;
+    bool resolved_cascade = false;
+    int resolved_resolution = 512;
+};
+
 // Every knob for one TRELLIS.2 image->3D run. Resolved as default -> environment
 // (the historical TRELLIS_* / GSS / GSH names) -> CLI flag, with the CLI winning.
 // trellis-cli and trellis-server share the parser: the server runs it once for its
@@ -29,6 +51,8 @@ struct TrellisParams {
     bool cascade    = true;     // 1024 cascade (default); --res 512 selects the light path
     int  hr_res     = 1024;     // HR cascade target resolution (1024 / 1536)
     int  max_tokens = 49152;    // HR token budget (backoff floors at 1024)
+    int  max_cascade_tokens = 0; // hard post-backoff guard; 0 disables it
+    DensePolicy dense_policy = DensePolicy::Fallback512;
 
     int birefnet = -1;          // bg removal: 1 BiRefNet, 0 white-threshold, -1 auto
                                 // (auto: keep a pre-matted image's alpha; else BiRefNet when
@@ -97,6 +121,17 @@ bool is_sampler_option(const std::string& name);
 bool set_sampler_option(const std::string& name, const std::string& value,
                         TrellisParams& p, std::string& error);
 bool validate_sampler_params(const TrellisParams& p, std::string& error);
+
+const char* dense_policy_name(DensePolicy policy) noexcept;
+const char* dense_guard_action_name(DenseGuardAction action) noexcept;
+bool set_density_option(const std::string& name, const std::string& value,
+                        TrellisParams& p, std::string& error);
+bool validate_density_params(const TrellisParams& p, std::string& error);
+DenseGuardDecision resolve_dense_guard(bool requested_cascade,
+                                       int selected_resolution,
+                                       int observed_tokens,
+                                       int max_cascade_tokens,
+                                       DensePolicy policy) noexcept;
 
 // Apply environment fallbacks, then parse argv (CLI wins). The first two bare
 // (non-flag) positionals fill `image` then `output`. Returns false on a parse
