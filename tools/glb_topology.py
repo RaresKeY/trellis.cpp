@@ -87,44 +87,108 @@ def parse_glb(path: Path) -> tuple[dict, bytes]:
         raise ValueError("invalid GLB chunk layout")
     if document is None:
         raise ValueError("GLB has no JSON chunk")
+    if not isinstance(document, dict):
+        raise ValueError("GLB JSON chunk must be an object")
     return document, binary
 
 
+def nonnegative_int(value: object, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{label} must be a non-negative integer")
+    return value
+
+
 def read_accessor(document: dict, binary: bytes, index: int) -> list[tuple]:
-    accessor = document["accessors"][index]
+    accessors = document.get("accessors")
+    views = document.get("bufferViews")
+    if not isinstance(accessors, list) or not isinstance(views, list):
+        raise ValueError("accessors and bufferViews must be arrays")
+    if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < len(accessors):
+        raise ValueError("accessor index is out of range")
+    accessor = accessors[index]
+    if not isinstance(accessor, dict):
+        raise ValueError("accessor must be an object")
+
     component_format = COMPONENT_FORMAT[accessor["componentType"]]
     component_count = TYPE_COMPONENTS[accessor["type"]]
-    view = document["bufferViews"][accessor["bufferView"]]
+    view_index = nonnegative_int(accessor["bufferView"], "accessor bufferView")
+    if view_index >= len(views):
+        raise ValueError("bufferView index is out of range")
+    view = views[view_index]
+    if not isinstance(view, dict):
+        raise ValueError("bufferView must be an object")
+    if nonnegative_int(view.get("buffer", 0), "buffer index") != 0:
+        raise ValueError("only GLB buffer 0 is supported")
+
     item_format = "<" + component_format * component_count
     item_size = struct.calcsize(item_format)
-    stride = view.get("byteStride", item_size)
-    offset = view.get("byteOffset", 0) + accessor.get("byteOffset", 0)
+    count = nonnegative_int(accessor["count"], "accessor count")
+    view_offset = nonnegative_int(view.get("byteOffset", 0), "bufferView byteOffset")
+    view_length = nonnegative_int(view["byteLength"], "bufferView byteLength")
+    accessor_offset = nonnegative_int(
+        accessor.get("byteOffset", 0), "accessor byteOffset"
+    )
+    stride = nonnegative_int(view.get("byteStride", item_size), "bufferView byteStride")
+    if stride < item_size:
+        raise ValueError("bufferView byteStride is smaller than the accessor item")
+    if view_offset + view_length > len(binary):
+        raise ValueError("bufferView exceeds the GLB binary chunk")
+
+    item_span = 0 if count == 0 else (count - 1) * stride + item_size
+    if accessor_offset + item_span > view_length:
+        raise ValueError("accessor exceeds its bufferView")
+
+    offset = view_offset + accessor_offset
     return [
         struct.unpack_from(item_format, binary, offset + item * stride)
-        for item in range(accessor["count"])
+        for item in range(count)
     ]
 
 
 def geometry(document: dict, binary: bytes) -> tuple[list[tuple], list[tuple[int, int, int]]]:
+    meshes = document.get("meshes", [])
+    if not isinstance(meshes, list):
+        raise ValueError("meshes must be an array")
+
     positions: list[tuple] = []
     faces: list[tuple[int, int, int]] = []
-    for mesh in document.get("meshes", []):
-        for primitive in mesh.get("primitives", []):
+    for mesh in meshes:
+        if not isinstance(mesh, dict):
+            raise ValueError("mesh must be an object")
+        primitives = mesh.get("primitives", [])
+        if not isinstance(primitives, list):
+            raise ValueError("mesh primitives must be an array")
+        for primitive in primitives:
+            if not isinstance(primitive, dict):
+                raise ValueError("mesh primitive must be an object")
             if primitive.get("mode", 4) != 4:
                 raise ValueError("non-triangle primitive is unsupported")
+            attributes = primitive.get("attributes")
+            if not isinstance(attributes, dict) or "POSITION" not in attributes:
+                raise ValueError("triangle primitive has no POSITION accessor")
+
             base = len(positions)
             primitive_positions = read_accessor(
-                document, binary, primitive["attributes"]["POSITION"]
+                document, binary, attributes["POSITION"]
             )
             if "indices" in primitive:
-                indices = [value[0] for value in read_accessor(document, binary, primitive["indices"])]
+                indices = [
+                    value[0]
+                    for value in read_accessor(document, binary, primitive["indices"])
+                ]
             else:
                 indices = list(range(len(primitive_positions)))
             if len(indices) % 3:
                 raise ValueError("triangle index count is not divisible by three")
+
+            def global_index(index_value: int) -> int:
+                if 0 <= index_value < len(primitive_positions):
+                    return index_value + base
+                return -1
+
             positions.extend(primitive_positions)
             faces.extend(
-                (indices[item] + base, indices[item + 1] + base, indices[item + 2] + base)
+                tuple(global_index(indices[item + corner]) for corner in range(3))
                 for item in range(0, len(indices), 3)
             )
     if not positions or not faces:
@@ -249,7 +313,16 @@ def main() -> int:
     for path in args.glb:
         try:
             status |= report(path, args.weld_tolerance)
-        except (IndexError, KeyError, OSError, OverflowError, struct.error, TypeError, ValueError) as error:
+        except (
+            AttributeError,
+            IndexError,
+            KeyError,
+            OSError,
+            OverflowError,
+            struct.error,
+            TypeError,
+            ValueError,
+        ) as error:
             print(f"{path}: error: {error}", file=sys.stderr)
             status = 1
     return status
