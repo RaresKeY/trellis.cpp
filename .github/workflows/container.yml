@@ -41,9 +41,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ ! "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+          tag="$GITHUB_REF_NAME"
+          if [[ ! "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
             echo "version tags must use vMAJOR.MINOR.PATCH[-PRERELEASE]" >&2
             exit 1
+          fi
+          if [[ "$tag" == *-* ]]; then
+            prerelease="${tag#*-}"
+            IFS='.' read -ra identifiers <<< "$prerelease"
+            for identifier in "${identifiers[@]}"; do
+              if [[ "$identifier" =~ ^0[0-9]+$ ]]; then
+                echo "numeric prerelease identifiers must not contain leading zeroes" >&2
+                exit 1
+              fi
+            done
           fi
 
       - name: Resolve publication policy

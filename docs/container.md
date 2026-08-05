@@ -15,7 +15,7 @@ and recursive submodules; it does not use the private `trellis2` patch stack.
 
 ## Tags
 
-Every push to `main` publishes `main` and `sha-<commit>` tags. A Git tag such as
+Every successful build of `main` publishes `main` and `sha-<commit>` tags. A Git tag such as
 `v1.2.3` additionally publishes:
 
 ```text
@@ -63,16 +63,34 @@ podman run --rm --device nvidia.com/gpu=all \
   ghcr.io/rareskey/trellis.cpp:v1.2.3
 ```
 
-Append normal `trellis-server` flags after the image name. The image defaults to
-`--models /models --gpu 0 --host 0.0.0.0 --port 8080 --require-gpu`.
+The image defaults to
+`trellis-server --models /models --gpu 0 --host 0.0.0.0 --port 8080 --require-gpu`.
+Arguments after the image name replace that entire default command. To customize
+server flags, repeat the executable and every option you want to retain. For
+example, to select GPU 1:
+
+```bash
+docker run --rm --gpus all \
+  --publish 127.0.0.1:8080:8080 \
+  --volume /absolute/path/to/models:/models:ro \
+  ghcr.io/rareskey/trellis.cpp:v1.2.3 \
+  trellis-server \
+  --models /models \
+  --gpu 1 \
+  --host 0.0.0.0 \
+  --port 8080 \
+  --require-gpu
+```
+
 The loopback-only publication above is deliberate because the server does not
 provide authentication; add an authenticated reverse proxy before exposing it
 to another network.
 
-Run the CLI or replay tool by replacing the image command:
+Run the CLI or replay tool by replacing the image command. Disable the
+server-specific health check for long-running one-shot tools:
 
 ```bash
-docker run --rm --gpus all \
+docker run --rm --gpus all --no-healthcheck \
   --volume /absolute/path/to/models:/models:ro \
   --volume "$PWD:/work" \
   ghcr.io/rareskey/trellis.cpp:v1.2.3 \
