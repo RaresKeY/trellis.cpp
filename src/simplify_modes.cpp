@@ -6,6 +6,7 @@
 #include <cfloat>
 #include <cmath>
 #include <cstdio>
+#include <utility>
 #include <vector>
 
 namespace trellis {
@@ -23,48 +24,108 @@ size_t simplify_once(std::vector<unsigned int>& output,
         target_indices, error_fraction, 0, &result_error);
 }
 
-void compact_mesh(const std::vector<float>& verts, int V,
-                  const std::vector<unsigned int>& indices, size_t count,
-                  std::vector<float>& out_verts,
-                  std::vector<int32_t>& out_faces) {
-    std::vector<int> remap(static_cast<size_t>(V), -1);
-    out_verts.clear();
-    out_faces.clear();
-    out_faces.reserve(count);
+struct Candidate {
+    std::vector<unsigned int> indices;
+    size_t count = 0;
+    float error = 0.0f;
+    size_t first_attempt_count = 0;
+    bool floor_adjusted = false;
+};
 
-    for (size_t i = 0; i + 2 < count; i += 3) {
-        const unsigned int a = indices[i];
-        const unsigned int b = indices[i + 1];
-        const unsigned int c = indices[i + 2];
-        if (a >= static_cast<unsigned int>(V) ||
-            b >= static_cast<unsigned int>(V) ||
-            c >= static_cast<unsigned int>(V))
-            continue;
-        if (a == b || b == c || a == c) continue;
+Candidate simplify_candidate(const std::vector<unsigned int>& input,
+                             const std::vector<float>& verts, int V,
+                             size_t target_faces, float error_fraction) {
+    Candidate result;
+    result.count = simplify_once(
+        result.indices, input, verts, V,
+        std::min(input.size(), target_faces * 3),
+        error_fraction, result.error);
+    result.first_attempt_count = result.count;
+    return result;
+}
 
-        const float abx = verts[3 * b] - verts[3 * a];
-        const float aby = verts[3 * b + 1] - verts[3 * a + 1];
-        const float abz = verts[3 * b + 2] - verts[3 * a + 2];
-        const float acx = verts[3 * c] - verts[3 * a];
-        const float acy = verts[3 * c + 1] - verts[3 * a + 1];
-        const float acz = verts[3 * c + 2] - verts[3 * a + 2];
-        const float cx = aby * acz - abz * acy;
-        const float cy = abz * acx - abx * acz;
-        const float cz = abx * acy - aby * acx;
-        if (cx * cx + cy * cy + cz * cz <= 0.0f) continue;
+Candidate simplify_with_floor(const std::vector<unsigned int>& input,
+                              const std::vector<float>& verts, int V,
+                              size_t target_faces, size_t floor_faces,
+                              float error_fraction) {
+    const size_t input_faces = input.size() / 3;
+    Candidate first = simplify_candidate(
+        input, verts, V, target_faces, error_fraction);
+    if (first.count / 3 >= floor_faces) return first;
 
-        const unsigned int tri[3] = {a, b, c};
-        for (unsigned int vertex : tri) {
-            assert(vertex < static_cast<unsigned int>(V));
-            int& mapped = remap[vertex];
-            if (mapped < 0) {
-                mapped = static_cast<int>(out_verts.size() / 3);
-                out_verts.insert(out_verts.end(),
-                                 &verts[3 * vertex], &verts[3 * vertex] + 3);
-            }
-            out_faces.push_back(mapped);
+    // meshoptimizer collapses edges in batches and can cross a face-count
+    // target. Raise the internal target from the original mesh until a safe
+    // result is found, then binary-search the bracket. Keep the lowest tested
+    // result at or above the requested floor; the original is always safe.
+    Candidate best;
+    best.indices = input;
+    best.count = input.size();
+    best.error = 0.0f;
+
+    size_t bad_target = target_faces;
+    size_t good_target = input_faces;
+    size_t delta = std::max<size_t>(
+        1, floor_faces - first.count / 3);
+    bool bracketed = false;
+    while (bad_target < input_faces) {
+        const size_t next_target =
+            std::min(input_faces, bad_target + delta);
+        Candidate next = simplify_candidate(
+            input, verts, V, next_target, error_fraction);
+        if (next.count / 3 >= floor_faces) {
+            good_target = next_target;
+            if (next.count < best.count) best = std::move(next);
+            bracketed = true;
+            break;
+        }
+        bad_target = next_target;
+        if (bad_target == input_faces) break;
+        delta = delta > input_faces / 2 ? input_faces : delta * 2;
+    }
+    if (!bracketed) {
+        best.first_attempt_count = first.count;
+        best.floor_adjusted = true;
+        return best;
+    }
+
+    while (bad_target + 1 < good_target) {
+        const size_t mid = bad_target + (good_target - bad_target) / 2;
+        Candidate next = simplify_candidate(
+            input, verts, V, mid, error_fraction);
+        if (next.count / 3 >= floor_faces) {
+            good_target = mid;
+            if (next.count < best.count) best = std::move(next);
+        } else {
+            bad_target = mid;
         }
     }
+    best.first_attempt_count = first.count;
+    best.floor_adjusted = true;
+    return best;
+}
+
+bool compact_mesh_exact(const std::vector<float>& verts, int V,
+                        const std::vector<unsigned int>& indices, size_t count,
+                        std::vector<float>& out_verts,
+                        std::vector<int32_t>& out_faces) {
+    if (count > indices.size() || count % 3 != 0) return false;
+    for (size_t i = 0; i < count; ++i)
+        if (indices[i] >= static_cast<unsigned int>(V)) return false;
+
+    std::vector<int> remap(static_cast<size_t>(V), -1);
+    out_verts.clear();
+    out_faces.resize(count);
+    for (size_t i = 0; i < count; ++i) {
+        const unsigned int vertex = indices[i];
+        int& mapped = remap[vertex];
+        if (mapped < 0) {
+            mapped = static_cast<int>(out_verts.size() / 3);
+            out_verts.insert(out_verts.end(),
+                             &verts[3 * vertex], &verts[3 * vertex] + 3);
+        }
+        out_faces[i] = mapped;
+    }
+    return true;
 }
 
 } // namespace
@@ -87,47 +148,60 @@ MeshoptAdaptiveReport decimate_meshopt_adaptive(
     if (options.mode == MeshoptAdaptiveMode::Bounded) {
         assert(options.min_faces >= 1);
         assert(options.max_faces >= options.min_faces);
+        assert(options.min_faces <= F);
     }
 
     std::vector<unsigned int> input(faces.begin(), faces.end());
-    std::vector<unsigned int> candidate;
     const float error_fraction = options.max_error_percent / 100.0f;
-    const size_t target_indices = options.mode == MeshoptAdaptiveMode::ErrorOnly
-        ? 0
-        : std::min(input.size(), static_cast<size_t>(options.min_faces) * 3);
+    Candidate quality = options.mode == MeshoptAdaptiveMode::ErrorOnly
+        ? simplify_candidate(input, verts, V, 0, error_fraction)
+        : simplify_with_floor(
+              input, verts, V,
+              static_cast<size_t>(options.min_faces),
+              static_cast<size_t>(options.min_faces),
+              error_fraction);
+    report.quality_faces = static_cast<int>(quality.count / 3);
+    Candidate output = std::move(quality);
+    bool error_limited = false;
 
-    float result_error = 0.0f;
-    size_t result_count = simplify_once(candidate, input, verts, V,
-                                        target_indices, error_fraction,
-                                        result_error);
-    report.quality_faces = static_cast<int>(result_count / 3);
+    if (options.mode == MeshoptAdaptiveMode::ErrorOnly &&
+        output.count > 0) {
+        Candidate unlimited = simplify_candidate(
+            input, verts, V, 0, FLT_MAX);
+        error_limited = unlimited.count < output.count;
+    }
 
     if (options.mode == MeshoptAdaptiveMode::Bounded &&
         report.quality_faces > options.max_faces) {
-        std::vector<unsigned int> forced_indices;
-        float forced_error = 0.0f;
-        const size_t forced_count = simplify_once(
-            forced_indices, input, verts, V,
-            std::min(input.size(), static_cast<size_t>(options.max_faces) * 3),
-            FLT_MAX, forced_error);
-        // Protect the floor even if a future meshoptimizer version can
-        // overshoot a count target. Keep the quality candidate when topology
-        // prevents the forced pass from making additional progress.
-        if (forced_count / 3 >= static_cast<size_t>(options.min_faces) &&
-            forced_count < result_count) {
-            candidate.swap(forced_indices);
-            result_count = forced_count;
-            result_error = forced_error;
+        Candidate forced = simplify_with_floor(
+            input, verts, V,
+            static_cast<size_t>(options.max_faces),
+            static_cast<size_t>(options.min_faces),
+            FLT_MAX);
+        report.forced_attempt_faces =
+            static_cast<int>(forced.first_attempt_count / 3);
+        if (forced.count / 3 >= static_cast<size_t>(options.min_faces) &&
+            forced.count < output.count) {
+            output = std::move(forced);
             report.forced = true;
         }
     }
 
-    compact_mesh(verts, V, candidate, result_count, out_verts, out_faces);
+    bool invalid_result = !compact_mesh_exact(
+        verts, V, output.indices, output.count, out_verts, out_faces);
+    if (invalid_result) {
+        output.indices = input;
+        output.count = input.size();
+        output.error = 0.0f;
+        report.forced = false;
+        (void)compact_mesh_exact(
+            verts, V, output.indices, output.count, out_verts, out_faces);
+    }
     report.output_faces = static_cast<int>(out_faces.size() / 3);
-    report.result_error_percent = result_error * 100.0f;
+    report.result_error_percent = output.error * 100.0f;
     report.mesh_extent = meshopt_simplifyScale(
         verts.data(), static_cast<size_t>(V), 3 * sizeof(float));
-    report.result_error_units = result_error * report.mesh_extent;
+    report.result_error_units = output.error * report.mesh_extent;
     report.no_progress = report.output_faces >= report.input_faces;
     report.min_met = options.mode != MeshoptAdaptiveMode::Bounded ||
         report.output_faces >= options.min_faces;
@@ -136,13 +210,18 @@ MeshoptAdaptiveReport decimate_meshopt_adaptive(
     report.error_met =
         report.result_error_percent <= options.max_error_percent + 1e-5f;
 
-    if (options.mode == MeshoptAdaptiveMode::ErrorOnly) {
-        report.stop_reason =
-            report.no_progress ? "no-progress" : "error-or-topology";
-    } else if (!report.min_met) {
-        report.stop_reason = "min-missed";
+    if (invalid_result) {
+        report.stop_reason = "invalid-index";
+    } else if (options.mode == MeshoptAdaptiveMode::ErrorOnly) {
+        if (report.no_progress)
+            report.stop_reason = error_limited
+                ? "no-progress-error-limit"
+                : "no-progress-topology-limit";
+        else
+            report.stop_reason =
+                error_limited ? "error-limit" : "topology-limit";
     } else if (!report.met_max) {
-        report.stop_reason = "max-missed";
+        report.stop_reason = "band-unreachable";
     } else if (report.forced) {
         report.stop_reason = "max-forced";
     } else if (report.no_progress) {
@@ -164,7 +243,8 @@ MeshoptAdaptiveReport decimate_meshopt_adaptive(
     std::printf(
         " requested_error_percent=%.6g result_error_percent=%.6g "
         "extent=%.6g result_error_units=%.6g quality_faces=%d output_faces=%d "
-        "stop_reason=%s min_met=%s max_met=%s error_met=%s forced=%s\n",
+        "stop_reason=%s min_met=%s max_met=%s error_met=%s forced=%s "
+        "forced_attempt_faces=",
         report.requested_error_percent, report.result_error_percent,
         report.mesh_extent, report.result_error_units,
         report.quality_faces, report.output_faces, report.stop_reason,
@@ -174,6 +254,8 @@ MeshoptAdaptiveReport decimate_meshopt_adaptive(
             (report.met_max ? "yes" : "no"),
         report.error_met ? "yes" : "no",
         report.forced ? "yes" : "no");
+    if (report.forced_attempt_faces < 0) std::printf("none\n");
+    else std::printf("%d\n", report.forced_attempt_faces);
     std::fflush(stdout);
     return report;
 }
