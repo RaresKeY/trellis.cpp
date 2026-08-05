@@ -325,6 +325,26 @@ and still trails Vulkan by 10–40 %.
 FQMS fallback; on difficult voxel meshes it may stop above `--faces` rather than
 silently switching algorithms. `--meshopt` and `--decim` are mutually exclusive.
 
+## Licensing
+
+Original trellis.cpp contributions are under the repository's MIT `LICENSE`.
+Bundled and adapted code retains its own notices in
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md); release archives must ship
+both files. The native C++ post-processing/export path in this repository does
+not link `nvdiffrast` or `nvdiffrec`.
+
+Model files are a separate license domain. TRELLIS.2 and BiRefNet weights are
+MIT-licensed, while DINOv3 uses Meta's custom license with redistribution,
+trade-control, and prohibited-use conditions. Distribute the exact model
+licenses with any weight or GGUF bundle.
+
+The QEM path is a declared CuMesh port and carries CuMesh's MIT notice. CuMesh
+names PaMO (AGPL-3.0) as a reference implementation for its parallel
+simplifier; this repository has not established that copyrightable PaMO code is
+present. This does not license generated assets under AGPL, but closed-source
+software distributors should resolve that provenance question or use an
+independently licensed simplification path.
+
 ## Building
 
 GGML is vendored in `thirdparty/ggml`. Pick a backend:
