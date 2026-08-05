@@ -18,6 +18,40 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  hygiene:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check changed-file whitespace
+        shell: bash
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BASE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          base="$PR_BASE"
+          if [[ -z "$base" ]]; then
+            base="$PUSH_BASE"
+          fi
+          if [[ -z "$base" || "$base" =~ ^0+$ ]] || ! git cat-file -e "$base^{commit}"; then
+            base="$(git rev-parse HEAD^ 2>/dev/null || git rev-list --max-parents=0 HEAD)"
+          fi
+          git diff --check "$base" "$GITHUB_SHA"
+
+      - name: Check shell syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' script; do
+            bash -n "$script"
+          done < <(git ls-files -z '*.sh')
+
   cpu-build:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -38,6 +72,7 @@ jobs:
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DGGML_OPENMP=OFF
+          -DGGML_NATIVE=OFF
           -DTRELLIS_WEBP=OFF
 
       - name: Build public entry points
