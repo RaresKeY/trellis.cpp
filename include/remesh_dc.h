@@ -1,3 +1,7 @@
+// Portions derived from JeffreyXiang/CuMesh.
+// Copyright (c) 2025 Jianfeng XIANG.
+// Licensed under MIT; see THIRD_PARTY_NOTICES.md.
+// Modified for trellis.cpp in 2026.
 // Narrow-band UDF dual-contouring remesh, ported from the reference
 // (CuMesh remeshing.py::remesh_narrow_band_dc + simple_dual_contour.cu; see
 // docs/spec/27-reference-postprocess.md §4). Rebuilds a noisy voxel-derived
