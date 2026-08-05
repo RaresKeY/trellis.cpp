@@ -8,6 +8,7 @@ namespace trellis {
 // the modules that own them read them with an environment fallback so test
 // binaries (which don't parse args) keep their historical TRELLIS_* behavior.
 extern bool g_sparse_cast_f32;  // defined in sparse.cpp        (TRELLIS_F32)
+extern bool g_c2s_diagnostics;  // defined in sparse.cpp
 extern bool g_no_fa;            // defined in dit.cpp           (TRELLIS_NOFA)
 extern bool g_require_gpu;      // defined in trellis_model.cpp (TRELLIS_REQUIRE_GPU)
 
@@ -70,6 +71,7 @@ struct TrellisParams {
     float texture_guidance_interval_start = 0.6f;
     float texture_guidance_interval_end = 0.9f;
     float texture_rescale_t = 3.0f;
+    bool c2s_diagnostics = false; // log C2S subdivision, chunking, and graph allocation
     bool voxply = false;        // dump out/myvox.ply              (debug)
     bool dump_slat = false;     // dump /tmp/hr_slat.bin           (debug)
     bool dump_bg = false;       // also write the bg-removal cutout as <out>_cutout.png
