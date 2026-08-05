@@ -78,7 +78,7 @@ jobs:
       - name: Build public entry points
         run: >
           cmake --build build
-          --target trellis-cli trellis-server post-replay
+          --target trellis-cli trellis-server post-replay trellis-test-args
           --parallel 2
 
       - name: Smoke-test argument parsing
@@ -86,6 +86,7 @@ jobs:
           ./build/trellis-cli --help
           ./build/trellis-server --help
           ./build/post-replay --help
+          ctest --test-dir build --output-on-failure -R trellis-args
           set +e
           ./build/post-replay ignored.bin ignored.glb --webp invalid
           status=$?
