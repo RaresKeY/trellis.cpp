@@ -140,8 +140,8 @@ Each stage accepts `--<stage>-steps`, `--<stage>-guidance`,
 `--<stage>-guidance-end`, and `--<stage>-rescale-t`. `--gss` and `--gsh`
 remain aliases for sparse and shape guidance, and the existing
 `TrellisParams::gss` / `TrellisParams::gsh` source fields remain supported.
-Shape controls apply to both the low-resolution and cascade high-resolution
-shape passes.
+Shape controls apply to the low-resolution and cascade high-resolution shape
+passes, as well as the experimental direct-1024 shape flow.
 
 Steps must be in 1–1000. Guidance must be finite and non-negative; guidance
 rescale must be finite and in `[0,1]`; interval endpoints must satisfy
