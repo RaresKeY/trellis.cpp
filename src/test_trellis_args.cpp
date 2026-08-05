@@ -190,6 +190,10 @@ int main() {
                      "--dense-policy", "allow"}, parsed));
         CHECK(parsed.max_cascade_tokens == 18000);
         CHECK(parsed.dense_policy == trellis::DensePolicy::Allow);
+        trellis::TrellisParams legacy;
+        CHECK(parse({"test", "--max-1024-tokens", "17000"}, legacy));
+        CHECK(legacy.max_cascade_tokens == 17000);
+
         trellis::TrellisParams invalid;
         CHECK(!parse({"test", "--max-cascade-tokens", "12junk"}, invalid));
     }
