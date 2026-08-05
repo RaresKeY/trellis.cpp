@@ -553,6 +553,15 @@ Source: https://github.com/opencv/opencv/blob/4.x/LICENSE
    limitations under the License.
 ```
 
+## NVIDIA CUDA runtime redistributables
+
+CUDA release archives may include NVIDIA's proprietary `cudart`, `cublas`,
+and `cublasLt` runtime components. They are not covered by the repository's MIT
+license. The archive's `NVIDIA-CUDA-LICENSES` directory contains the pinned
+CUDA component license files and the downstream-use summary tracked at
+[`thirdparty/nvidia-cuda-runtime/README.md`](thirdparty/nvidia-cuda-runtime/README.md).
+Those NVIDIA terms govern the bundled runtime components.
+
 ## Model weights and converted model files
 
 Model materials are not licensed by this software notice. When weights or GGUF
