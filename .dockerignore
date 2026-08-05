@@ -1,0 +1,17 @@
+/build/
+/build-*/
+/out/
+/dumps/
+/models/*
+!/models/.gitkeep
+/app/node_modules/
+/app/src-tauri/target/
+*.gguf
+*.safetensors
+*.glb
+*.tmp
+__pycache__/
+*.pyc
+.venv/
+
+# Keep .git in the context: CMake uses it for the embedded revision/version.
