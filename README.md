@@ -333,6 +333,11 @@ Bundled and adapted code retains its own notices in
 both files. The native C++ post-processing/export path in this repository does
 not link `nvdiffrast` or `nvdiffrec`.
 
+CUDA release archives additionally contain NVIDIA's proprietary `cudart`,
+`cublas`, and `cublasLt` redistributables. Their
+`NVIDIA-CUDA-LICENSES` directory carries the pinned NVIDIA component terms;
+the repository MIT license does not cover those binaries.
+
 Model files are a separate license domain. TRELLIS.2 and BiRefNet weights are
 MIT-licensed, while DINOv3 uses Meta's custom license with redistribution,
 trade-control, and prohibited-use conditions. Distribute the exact model
