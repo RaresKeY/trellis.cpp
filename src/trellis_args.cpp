@@ -1,11 +1,203 @@
 #include "trellis_args.h"
 
+#include <cerrno>
+#include <cctype>
+#include <climits>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
 
 namespace trellis {
+namespace {
+
+enum class SamplerField {
+    none,
+    sparse_steps, sparse_guidance, sparse_rescale, sparse_start, sparse_end, sparse_rescale_t,
+    shape_steps, shape_guidance, shape_rescale, shape_start, shape_end, shape_rescale_t,
+    texture_steps, texture_guidance, texture_rescale, texture_start, texture_end, texture_rescale_t,
+};
+
+std::string sampler_key(std::string name) {
+    if (name.compare(0, 2, "--") == 0) name.erase(0, 2);
+    for (char& c : name) if (c == '-') c = '_';
+    return name;
+}
+
+SamplerField sampler_field(const std::string& name) {
+    const std::string key = sampler_key(name);
+    if (key == "sparse_steps") return SamplerField::sparse_steps;
+    if (key == "sparse_guidance" || key == "sparse_guidance_strength" || key == "gss")
+        return SamplerField::sparse_guidance;
+    if (key == "sparse_guidance_rescale") return SamplerField::sparse_rescale;
+    if (key == "sparse_guidance_start" || key == "sparse_guidance_interval_start")
+        return SamplerField::sparse_start;
+    if (key == "sparse_guidance_end" || key == "sparse_guidance_interval_end")
+        return SamplerField::sparse_end;
+    if (key == "sparse_rescale_t") return SamplerField::sparse_rescale_t;
+
+    if (key == "shape_steps") return SamplerField::shape_steps;
+    if (key == "shape_guidance" || key == "shape_guidance_strength" || key == "gsh")
+        return SamplerField::shape_guidance;
+    if (key == "shape_guidance_rescale") return SamplerField::shape_rescale;
+    if (key == "shape_guidance_start" || key == "shape_guidance_interval_start")
+        return SamplerField::shape_start;
+    if (key == "shape_guidance_end" || key == "shape_guidance_interval_end")
+        return SamplerField::shape_end;
+    if (key == "shape_rescale_t") return SamplerField::shape_rescale_t;
+
+    if (key == "texture_steps") return SamplerField::texture_steps;
+    if (key == "texture_guidance" || key == "texture_guidance_strength")
+        return SamplerField::texture_guidance;
+    if (key == "texture_guidance_rescale") return SamplerField::texture_rescale;
+    if (key == "texture_guidance_start" || key == "texture_guidance_interval_start")
+        return SamplerField::texture_start;
+    if (key == "texture_guidance_end" || key == "texture_guidance_interval_end")
+        return SamplerField::texture_end;
+    if (key == "texture_rescale_t") return SamplerField::texture_rescale_t;
+    return SamplerField::none;
+}
+
+bool edge_space(const std::string& text) {
+    return !text.empty() &&
+           (std::isspace(static_cast<unsigned char>(text.front())) ||
+            std::isspace(static_cast<unsigned char>(text.back())));
+}
+
+bool strict_int(const std::string& text, int& result) {
+    if (text.empty() || edge_space(text)) return false;
+    errno = 0;
+    char* end = nullptr;
+    const long parsed = std::strtol(text.c_str(), &end, 10);
+    if (errno == ERANGE || end != text.c_str() + text.size() ||
+        parsed < INT_MIN || parsed > INT_MAX)
+        return false;
+    result = static_cast<int>(parsed);
+    return true;
+}
+
+bool strict_float(const std::string& text, float& result) {
+    if (text.empty() || edge_space(text)) return false;
+    errno = 0;
+    char* end = nullptr;
+    const float parsed = std::strtof(text.c_str(), &end);
+    if (errno == ERANGE || end != text.c_str() + text.size() || !std::isfinite(parsed))
+        return false;
+    result = parsed;
+    return true;
+}
+
+bool validate_stage(const char* stage, int steps, float guidance, float guidance_rescale,
+                    float interval_start, float interval_end, float rescale_t,
+                    std::string& error) {
+    if (steps < 1 || steps > 1000) {
+        error = std::string(stage) + "_steps must be between 1 and 1000";
+        return false;
+    }
+    if (!std::isfinite(guidance) || guidance < 0.0f) {
+        error = std::string(stage) + "_guidance must be finite and non-negative";
+        return false;
+    }
+    if (!std::isfinite(guidance_rescale) ||
+        guidance_rescale < 0.0f || guidance_rescale > 1.0f) {
+        error = std::string(stage) + "_guidance_rescale must be between 0 and 1";
+        return false;
+    }
+    if (!std::isfinite(interval_start) || !std::isfinite(interval_end) ||
+        interval_start < 0.0f || interval_start > interval_end || interval_end > 1.0f) {
+        error = std::string(stage) +
+                "_guidance interval must satisfy 0 <= start <= end <= 1";
+        return false;
+    }
+    if (!std::isfinite(rescale_t) || rescale_t <= 0.0f) {
+        error = std::string(stage) + "_rescale_t must be finite and positive";
+        return false;
+    }
+    return true;
+}
+
+}  // namespace
+
+bool parse_strict_int(const std::string& value, int& out) {
+    return strict_int(value, out);
+}
+
+bool parse_strict_float(const std::string& value, float& out) {
+    return strict_float(value, out);
+}
+
+bool is_sampler_option(const std::string& name) {
+    return sampler_field(name) != SamplerField::none;
+}
+
+bool set_sampler_option(const std::string& name, const std::string& value,
+                        TrellisParams& p, std::string& error) {
+    const SamplerField field = sampler_field(name);
+    if (field == SamplerField::none) {
+        error = "unknown sampler option: " + name;
+        return false;
+    }
+
+    int* integer = nullptr;
+    float* scalar = nullptr;
+    switch (field) {
+        case SamplerField::sparse_steps:       integer = &p.sparse_steps; break;
+        case SamplerField::shape_steps:        integer = &p.shape_steps; break;
+        case SamplerField::texture_steps:      integer = &p.texture_steps; break;
+        case SamplerField::sparse_guidance:    scalar = &p.gss; break;
+        case SamplerField::sparse_rescale:     scalar = &p.sparse_guidance_rescale; break;
+        case SamplerField::sparse_start:       scalar = &p.sparse_guidance_interval_start; break;
+        case SamplerField::sparse_end:         scalar = &p.sparse_guidance_interval_end; break;
+        case SamplerField::sparse_rescale_t:   scalar = &p.sparse_rescale_t; break;
+        case SamplerField::shape_guidance:     scalar = &p.gsh; break;
+        case SamplerField::shape_rescale:      scalar = &p.shape_guidance_rescale; break;
+        case SamplerField::shape_start:        scalar = &p.shape_guidance_interval_start; break;
+        case SamplerField::shape_end:          scalar = &p.shape_guidance_interval_end; break;
+        case SamplerField::shape_rescale_t:    scalar = &p.shape_rescale_t; break;
+        case SamplerField::texture_guidance:   scalar = &p.texture_guidance_strength; break;
+        case SamplerField::texture_rescale:    scalar = &p.texture_guidance_rescale; break;
+        case SamplerField::texture_start:      scalar = &p.texture_guidance_interval_start; break;
+        case SamplerField::texture_end:        scalar = &p.texture_guidance_interval_end; break;
+        case SamplerField::texture_rescale_t:  scalar = &p.texture_rescale_t; break;
+        case SamplerField::none: break;
+    }
+
+    if (integer) {
+        int parsed = 0;
+        if (!parse_strict_int(value, parsed)) {
+            error = sampler_key(name) + " must be a whole integer";
+            return false;
+        }
+        *integer = parsed;
+    } else {
+        float parsed = 0.0f;
+        if (!parse_strict_float(value, parsed)) {
+            error = sampler_key(name) + " must be a finite number";
+            return false;
+        }
+        *scalar = parsed;
+    }
+    error.clear();
+    return true;
+}
+
+bool validate_sampler_params(const TrellisParams& p, std::string& error) {
+    if (!validate_stage("sparse", p.sparse_steps, p.gss, p.sparse_guidance_rescale,
+                        p.sparse_guidance_interval_start, p.sparse_guidance_interval_end,
+                        p.sparse_rescale_t, error))
+        return false;
+    if (!validate_stage("shape", p.shape_steps, p.gsh, p.shape_guidance_rescale,
+                        p.shape_guidance_interval_start, p.shape_guidance_interval_end,
+                        p.shape_rescale_t, error))
+        return false;
+    if (!validate_stage("texture", p.texture_steps, p.texture_guidance_strength,
+                        p.texture_guidance_rescale, p.texture_guidance_interval_start,
+                        p.texture_guidance_interval_end, p.texture_rescale_t, error))
+        return false;
+    error.clear();
+    return true;
+}
 
 void print_usage(const char* argv0, bool server) {
     if (server) {
@@ -51,7 +243,12 @@ void print_usage(const char* argv0, bool server) {
         "      --f32               f32 sparse-conv compute\n"
         "      --no-fa             disable FlashAttention\n"
         "      --require-gpu       refuse CPU fallback\n"
-        "      --gss F  --gsh F    guidance strengths\n"
+        "      --<stage>-steps N  sampler steps for sparse/shape/texture\n"
+        "      --<stage>-guidance F  classifier-free guidance strength\n"
+        "      --<stage>-guidance-rescale F\n"
+        "      --<stage>-guidance-start F  --<stage>-guidance-end F\n"
+        "      --<stage>-rescale-t F\n"
+        "      --gss F  --gsh F    legacy sparse/shape guidance aliases\n"
         "      --host H  --port P  trellis-server bind address\n"
         "      --voxply            also dump the voxel point cloud as .ply\n"
         "      --dump-slat         dump the structured latent to disk\n"
@@ -98,8 +295,12 @@ bool parse_args(int argc, char** argv, TrellisParams& p) {
         else if (a == "--f32")                  { p.f32 = true; }
         else if (a == "--no-fa")                { p.no_fa = true; }
         else if (a == "--require-gpu")          { p.require_gpu = true; }
-        else if (a == "--gss")                  { const char* v = need(a.c_str()); if (!v) return false; p.gss = (float)atof(v); }
-        else if (a == "--gsh")                  { const char* v = need(a.c_str()); if (!v) return false; p.gsh = (float)atof(v); }
+        else if (is_sampler_option(a))          { const char* v = need(a.c_str()); if (!v) return false;
+                                                  std::string error;
+                                                  if (!set_sampler_option(a, v, p, error)) {
+                                                      fprintf(stderr, "[trellis] %s\n", error.c_str());
+                                                      return false;
+                                                  } }
         else if (a == "--host")                 { const char* v = need(a.c_str()); if (!v) return false; p.host = v; }
         else if (a == "--port")                 { const char* v = need(a.c_str()); if (!v) return false; p.port = atoi(v); }
         else if (a == "--voxply")               { p.voxply = true; }
@@ -108,6 +309,11 @@ bool parse_args(int argc, char** argv, TrellisParams& p) {
         else if (positional == 0)               { p.image  = a; positional = 1; }
         else if (positional == 1)               { p.output = a; positional = 2; }
         else                                    { fprintf(stderr, "[trellis] unexpected argument: %s\n", a.c_str()); return false; }
+    }
+    std::string sampler_error;
+    if (!validate_sampler_params(p, sampler_error)) {
+        fprintf(stderr, "[trellis] %s\n", sampler_error.c_str());
+        return false;
     }
     return true;
 }
