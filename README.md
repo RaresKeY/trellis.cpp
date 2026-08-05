@@ -158,6 +158,8 @@ choice to the 512 pipeline, and `allow` records the overflow but continues.
 The server accepts `max_cascade_tokens` and `dense_policy`; invalid values return
 HTTP 400, while a valid `fail` policy that trips returns HTTP 422. Hardware-specific
 limits should be configured by the deployment rather than baked into the library.
+The former `--max-1024-tokens` / `max_1024_tokens` names remain accepted as
+compatibility aliases for the private v0.5.4 patch.
 
 The postprocess matches the reference pipeline op for op (see
 `docs/spec/27-reference-postprocess.md` / `28-divergence-matrix.md`): the raw
