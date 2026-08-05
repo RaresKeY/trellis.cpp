@@ -14,6 +14,7 @@ using T = ggml_tensor;
 void mem_probe(const char* tag);   // shape_decoder.cpp
 
 bool g_sparse_cast_f32 = false;   // cast f16 conv weights to f32 (precision check)
+bool g_c2s_diagnostics = false;   // opt-in per-run C2S diagnostics
 static T* w32(ggml_context* c, T* w) {
     return (g_sparse_cast_f32 && w->type == GGML_TYPE_F16) ? ggml_cast(c, w, GGML_TYPE_F32) : w;
 }
@@ -159,7 +160,7 @@ struct GraphRun {
         ggml_build_forward_expand(g, out);
         alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(m.backend));
         if (!ggml_gallocr_alloc_graph(alloc, g)) throw std::runtime_error("c2s: alloc failed");
-        if (getenv("TRELLIS_DBG_ALLOC"))
+        if (g_c2s_diagnostics || getenv("TRELLIS_DBG_ALLOC"))
             fprintf(stderr, "      [c2s-alloc] nodes=%d  gallocr buffer = %.2f GB\n",
                     ggml_graph_n_nodes(g), ggml_gallocr_get_buffer_size(alloc, 0) / 1e9);
         for (auto& [t, data] : inputs) ggml_backend_tensor_set(t, data, 0, ggml_nbytes(t));
@@ -188,7 +189,7 @@ C2SResult sparse_c2s(const Model& m, const std::string& prefix,
         T* sd = ggml_add(c, mul_mat_rows(c, m.get(prefix + ".to_subdiv.weight"), gf),
                          m.get(prefix + ".to_subdiv.bias"));
         subdiv = gr1.run(sd, { {gf, feats_in.data()} });   // [8, N] -- small
-        if (getenv("TRELLIS_DBG_SUBDIV")) {
+        if (g_c2s_diagnostics || getenv("TRELLIS_DBG_SUBDIV")) {
             size_t pos = 0; double smin = 0, smax = 0; bool first = true;
             for (float x : subdiv) { if (x > 0.0f) pos++; if (first) { smin = smax = x; first = false; }
                 else { if (x < smin) smin = x; if (x > smax) smax = x; } }
@@ -222,7 +223,7 @@ C2SResult sparse_c2s(const Model& m, const std::string& prefix,
     mstart[N] = (int32_t)gidx.size();
     const int M = (int)nc.size();
     std::vector<int32_t> nnbr = build_neighbor_table(nc);
-    if (getenv("TRELLIS_DBG_MEM"))
+    if (g_c2s_diagnostics || getenv("TRELLIS_DBG_MEM"))
         fprintf(stderr, "      [c2s] %-22s N=%d -> M=%d | host nnbr=%.2f GB feats_in=%.2f GB out=%.2f GB\n",
                 prefix.c_str(), N, M, (double)nnbr.size() * 4 / 1e9,
                 (double)feats_in.size() * 4 / 1e9, (double)Cout * M * 4 / 1e9);
@@ -238,6 +239,11 @@ C2SResult sparse_c2s(const Model& m, const std::string& prefix,
     constexpr int64_t kMaxChunks = 24;         // node-budget floor, as in sparse_convnext
     if (chunk * kMaxChunks < N) chunk = (N + kMaxChunks - 1) / kMaxChunks;
     if (chunk >= N) chunk = N;
+    if (g_c2s_diagnostics)
+        fprintf(stderr,
+                "      [c2s] %-22s conv1_chunk=%lld input_chunks=%lld budget=%.2f GB\n",
+                prefix.c_str(), (long long)chunk,
+                (long long)(chunk > 0 ? (N + chunk - 1) / chunk : 0), budget / 1e9);
 
     // Per-chunk gather indices are chunk-local (the [Cout, 8*nr] reshape restarts at 0), so
     // rebase once on the host: gloc[m] = gidx[m] - 8*r0 for m in this chunk's range.
@@ -312,6 +318,10 @@ C2SResult sparse_c2s(const Model& m, const std::string& prefix,
     constexpr int64_t kMaxChunks2 = 64;               // ~135 nodes/chunk, well under kGraphNodes
     if (chunk2 * kMaxChunks2 < M) chunk2 = (M + kMaxChunks2 - 1) / kMaxChunks2;
     if (chunk2 >= M) chunk2 = M;
+    if (g_c2s_diagnostics)
+        fprintf(stderr, "      [c2s] %-22s conv2_chunk=%lld output_chunks=%lld\n",
+                prefix.c_str(), (long long)chunk2,
+                (long long)(chunk2 > 0 ? (M + chunk2 - 1) / chunk2 : 0));
 
     T* out = nullptr;
     for (int64_t m0 = 0; m0 < M; m0 += chunk2) {
