@@ -164,6 +164,7 @@ jobs:
         run: |
           set -e
           mkdir -p dist
+          cp LICENSE THIRD_PARTY_NOTICES.md dist/
           if [ "${{ matrix.os }}" = "windows" ]; then
             cp build/trellis-server.exe dist/
             cp build/trellis-cli.exe dist/
@@ -297,6 +298,7 @@ jobs:
           rm -rf portable && mkdir -p portable
           cp app/src-tauri/target/release/trellis-studio portable/
           cp install/portable-readme.txt portable/README.txt
+          cp LICENSE THIRD_PARTY_NOTICES.md portable/
           : > portable/portable.dat
           tar -C portable -czf trellis-studio-linux-x86_64-portable.tar.gz .
           gh release upload "${{ steps.tag.outputs.value }}" \
@@ -323,6 +325,7 @@ jobs:
           cp app/src-tauri/target/release/trellis-studio.exe portable/
           cp app/src-tauri/target/release/*.dll portable/ 2>/dev/null || true
           cp install/portable-readme.txt portable/README.txt
+          cp LICENSE THIRD_PARTY_NOTICES.md portable/
           : > portable/portable.dat
           (cd portable && 7z a -y ../trellis-studio-windows-x64-portable.zip ./* >/dev/null)
           gh release upload "${{ steps.tag.outputs.value }}" \
