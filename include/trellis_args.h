@@ -49,6 +49,7 @@ struct TrellisParams {
     uint32_t seed = 0;
 
     bool cascade    = true;     // 1024 cascade (default); --res 512 selects the light path
+    bool direct_1024 = false;    // experimental native res-64 SS path; no LR cascade
     int  hr_res     = 1024;     // HR cascade target resolution (1024 / 1536)
     int  max_tokens = 49152;    // HR token budget (backoff floors at 1024)
     int  max_cascade_tokens = 0; // hard post-backoff guard; 0 disables it
@@ -105,6 +106,7 @@ struct TrellisParams {
 
     // 512 -> light single-res path; 1024/1536 -> cascade with that HR target.
     void set_res(int res) {
+        direct_1024 = false;
         if (res <= 512) { cascade = false; hr_res = 512; }
         else            { cascade = true;  hr_res = res; }
     }
@@ -115,6 +117,11 @@ void print_usage(const char* argv0, bool server);
 // Shared strict numeric parsing for CLI flags and HTTP multipart fields.
 bool parse_strict_int(const std::string& value, int& out);
 bool parse_strict_float(const std::string& value, float& out);
+
+const char* pipeline_name(const TrellisParams& p) noexcept;
+bool set_resolution_option(const std::string& value, TrellisParams& p, std::string& error);
+bool set_pipeline_option(const std::string& value, TrellisParams& p, std::string& error);
+bool validate_pipeline_params(const TrellisParams& p, std::string& error);
 
 // Sampler names may use CLI hyphens (with an optional "--") or HTTP underscores.
 bool is_sampler_option(const std::string& name);
