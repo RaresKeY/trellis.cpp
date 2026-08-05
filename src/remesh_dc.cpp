@@ -1,3 +1,7 @@
+// Portions derived from JeffreyXiang/CuMesh.
+// Copyright (c) 2025 Jianfeng XIANG.
+// Licensed under MIT; see THIRD_PARTY_NOTICES.md.
+// Modified for trellis.cpp in 2026.
 #include "remesh_dc.h"
 #include "tri_bvh.h"
 #include <algorithm>
