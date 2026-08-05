@@ -49,6 +49,28 @@ int trellis_run(const trellis::TrellisParams& cfg) {
     // Unbuffered, not line-buffered: MSVCRT treats _IOLBF as full buffering, which
     // swallows stage progress when piped (e.g. under Lemonade) if the process crashes.
     setvbuf(stdout, nullptr, _IONBF, 0);
+
+    std::string sampler_error;
+    if (!trellis::validate_sampler_params(cfg, sampler_error)) {
+        fprintf(stderr, "[trellis] invalid sampler parameters: %s\n", sampler_error.c_str());
+        return 2;
+    }
+    fprintf(stderr,
+            "[sampler] sparse steps=%d guidance=%.6g rescale=%.6g interval=[%.6g,%.6g] rescale_t=%.6g\n",
+            cfg.sparse_steps, cfg.gss, cfg.sparse_guidance_rescale,
+            cfg.sparse_guidance_interval_start, cfg.sparse_guidance_interval_end,
+            cfg.sparse_rescale_t);
+    fprintf(stderr,
+            "[sampler] shape steps=%d guidance=%.6g rescale=%.6g interval=[%.6g,%.6g] rescale_t=%.6g\n",
+            cfg.shape_steps, cfg.gsh, cfg.shape_guidance_rescale,
+            cfg.shape_guidance_interval_start, cfg.shape_guidance_interval_end,
+            cfg.shape_rescale_t);
+    fprintf(stderr,
+            "[sampler] texture steps=%d guidance=%.6g rescale=%.6g interval=[%.6g,%.6g] rescale_t=%.6g\n",
+            cfg.texture_steps, cfg.texture_guidance_strength, cfg.texture_guidance_rescale,
+            cfg.texture_guidance_interval_start, cfg.texture_guidance_interval_end,
+            cfg.texture_rescale_t);
+
     uint32_t run_seed = cfg.seed;
     if (run_seed == 0) {
         std::random_device rd;
@@ -139,7 +161,13 @@ int trellis_run(const trellis::TrellisParams& cfg) {
         trellis::DiTParams p; p.in_ch = 8; p.out_ch = 8; p.d_cond = 1024; p.cast_f32 = F32;
         trellis::DitRunner* run = trellis::make_dense_runner(m, p, 16, Lc);
         trellis::FlowFwd fwd = [&](const vector<float>& x, float ts, const float* c){ return run->forward(x, ts, c); };
-        trellis::SamplerParams sp; sp.steps=12; sp.guidance_strength=cfg.gss; sp.guidance_rescale=0.7f; sp.gi0=0.6f; sp.gi1=1.0f; sp.rescale_t=5.0f;
+        trellis::SamplerParams sp;
+        sp.steps = cfg.sparse_steps;
+        sp.guidance_strength = cfg.gss;
+        sp.guidance_rescale = cfg.sparse_guidance_rescale;
+        sp.gi0 = cfg.sparse_guidance_interval_start;
+        sp.gi1 = cfg.sparse_guidance_interval_end;
+        sp.rescale_t = cfg.sparse_rescale_t;
         vector<float> z = trellis::sample_flow(fwd, noise(8*4096), cond.data(), neg.data(), sp);  // [8,4096] ne0=8
         delete run; m.free();
         // transpose [8,L] -> torch [8,16,16,16] memory (c*4096 + sp)
@@ -163,7 +191,13 @@ int trellis_run(const trellis::TrellisParams& cfg) {
         trellis::DiTParams p; p.in_ch = 32; p.out_ch = 32; p.d_cond = 1024; p.cast_f32 = F32;
         trellis::DitRunner* run = trellis::make_sparse_runner(m, p, cds, lc);
         trellis::FlowFwd fwd = [&](const vector<float>& x, float ts, const float* c){ return run->forward(x, ts, c); };
-        trellis::SamplerParams sp; sp.steps=12; sp.guidance_strength=cfg.gsh; sp.guidance_rescale=0.5f; sp.gi0=0.6f; sp.gi1=1.0f; sp.rescale_t=3.0f;
+        trellis::SamplerParams sp;
+        sp.steps = cfg.shape_steps;
+        sp.guidance_strength = cfg.gsh;
+        sp.guidance_rescale = cfg.shape_guidance_rescale;
+        sp.gi0 = cfg.shape_guidance_interval_start;
+        sp.gi1 = cfg.shape_guidance_interval_end;
+        sp.rescale_t = cfg.shape_rescale_t;
         vector<float> sn = trellis::sample_flow(fwd, noise((size_t)32*n), cnd, ncnd, sp);   // [32,n]
         delete run; m.free();
         return sn;
@@ -313,7 +347,13 @@ int trellis_run(const trellis::TrellisParams& cfg) {
                 }
                 return run->forward(x64, ts, c);
             };
-            trellis::SamplerParams sp; sp.steps=12; sp.guidance_strength=1.0f; sp.guidance_rescale=0.0f; sp.gi0=0.6f; sp.gi1=0.9f; sp.rescale_t=3.0f;
+            trellis::SamplerParams sp;
+            sp.steps = cfg.texture_steps;
+            sp.guidance_strength = cfg.texture_guidance_strength;
+            sp.guidance_rescale = cfg.texture_guidance_rescale;
+            sp.gi0 = cfg.texture_guidance_interval_start;
+            sp.gi1 = cfg.texture_guidance_interval_end;
+            sp.rescale_t = cfg.texture_rescale_t;
             texlat = trellis::sample_flow(fwd, noise((size_t)32*tN), tcond, tneg, sp);  // [32,tN]
             delete run; m.free();
             for (int n = 0; n < tN; ++n) for (int c = 0; c < 32; ++c) texlat[(size_t)c + 32*n] = texlat[(size_t)c + 32*n]*TEX_STD[c] + TEX_MEAN[c];
