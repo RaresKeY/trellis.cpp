@@ -1,3 +1,7 @@
+// Portions derived from JeffreyXiang/CuMesh.
+// Copyright (c) 2025 Jianfeng XIANG.
+// Licensed under MIT; see THIRD_PARTY_NOTICES.md.
+// Modified for trellis.cpp in 2026.
 // Self-contained CUDA/HIP port of CuMesh's QEM edge-collapse simplifier
 // (refs/CuMesh/src/simplify.cu + connectivity.cu + dtypes.cuh QEM), mirroring the
 // validated CPU port in src/decimate_qem.cpp exactly:
