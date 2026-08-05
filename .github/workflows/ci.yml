@@ -52,6 +52,18 @@ jobs:
             bash -n "$script"
           done < <(git ls-files -z '*.sh')
 
+      - name: Check third-party notice coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s LICENSE
+          test -s THIRD_PARTY_NOTICES.md
+          test -s thirdparty/cpp-httplib/LICENSE
+          grep -Fq 'Copyright (c) 2025 Jianfeng XIANG' THIRD_PARTY_NOTICES.md
+          grep -Fq 'Copyright (C) 2000, Intel Corporation' THIRD_PARTY_NOTICES.md
+          grep -Fq 'Copyright (c) 2010, Google Inc.' THIRD_PARTY_NOTICES.md
+          grep -Fq 'cp LICENSE THIRD_PARTY_NOTICES.md dist/' .github/workflows/release.yml
+
       - name: Test GLB topology diagnostics
         run: >
           python3 -m unittest discover
