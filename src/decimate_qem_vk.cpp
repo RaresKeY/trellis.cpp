@@ -1,3 +1,7 @@
+// Portions derived from JeffreyXiang/CuMesh.
+// Copyright (c) 2025 Jianfeng XIANG.
+// Licensed under MIT; see THIRD_PARTY_NOTICES.md.
+// Modified for trellis.cpp in 2026.
 // Vulkan compute host driver for the CuMesh QEM edge-collapse simplifier. Mirrors the CUDA/HIP
 // port (src/decimate_qem.cu) and the validated CPU algorithm (src/decimate_qem.cpp), but runs the
 // four per-round COMPUTE kernels (0 qem / 1 cost / 2 propagate / 3 collapse, selected by a
