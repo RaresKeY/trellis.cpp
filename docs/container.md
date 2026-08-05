@@ -7,8 +7,9 @@ publishes it to GitHub Container Registry:
 ghcr.io/rareskey/trellis.cpp
 ```
 
-The image is Linux/amd64, includes `trellis-server`, `trellis-cli`, and
-`post-replay`, and contains no model weights. Mount a compatible GGUF model
+The published image is Linux/amd64 and is compiled for CUDA SM75/Turing GPUs,
+including the GeForce RTX 2080 Ti. It includes `trellis-server`, `trellis-cli`,
+and `post-replay`, and contains no model weights. Mount a compatible GGUF model
 directory at `/models`. It is compiled from the exact public-repository checkout
 and recursive submodules; it does not use the private `trellis2` patch stack.
 
@@ -81,15 +82,20 @@ docker run --rm --gpus all \
 
 ## Build locally
 
-The default image supports CUDA architectures 75, 80, 86, 89, 90, and 120. To
-build only for a Turing/SM75 GPU:
+The CI-published image targets CUDA architecture 75 (Turing/SM75). The
+Containerfile keeps the architecture build argument overrideable for local
+images. For example, build for Ampere/SM86 with:
 
 ```bash
 podman build \
-  --build-arg 'CMAKE_CUDA_ARCHITECTURES=75' \
-  --tag localhost/trellis.cpp:sm75 \
+  --build-arg 'CMAKE_CUDA_ARCHITECTURES=86' \
+  --tag localhost/trellis.cpp:sm86 \
   --file Containerfile .
 ```
+
+Multiple architectures can still be requested locally with a semicolon-separated
+value such as `75;86;89`, but each extra architecture materially increases CUDA
+template compilation time and image build cost.
 
 The runtime stage is based on NVIDIA's CUDA runtime image and retains its
 container license. The project `LICENSE` and `THIRD_PARTY_NOTICES.md` are copied

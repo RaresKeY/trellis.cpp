@@ -1,12 +1,12 @@
 # syntax=docker/dockerfile:1.7
 
 # Keep these bases aligned with the CUDA version used by the native release job.
-# The image is intentionally linux/amd64-only; the CUDA architecture list can be
-# overridden at build time when a smaller, GPU-specific image is preferred.
+# The published image is intentionally linux/amd64 and CUDA SM75/Turing. The
+# architecture list remains overrideable for local builds targeting other GPUs.
 FROM docker.io/nvidia/cuda:13.1.2-devel-ubuntu22.04@sha256:7d1c645f99a4829ae31ceb88cce3bcf330ce45486e48abc68400764d581c07cd AS builder
 
-ARG CMAKE_CUDA_ARCHITECTURES="75;80;86;89;90;120"
-ARG BUILD_JOBS=2
+ARG CMAKE_CUDA_ARCHITECTURES="75"
+ARG BUILD_JOBS=4
 
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
@@ -47,8 +47,8 @@ RUN cmake -S . -B /build -G Ninja \
 
 FROM docker.io/nvidia/cuda:13.1.2-runtime-ubuntu22.04@sha256:2150d95359d4c9b22d36e00c0006c1c4fa1e51870b68de74645d20832e3a2fbc
 
-LABEL org.opencontainers.image.title="trellis.cpp CUDA" \
-      org.opencontainers.image.description="CUDA image-to-3D server, CLI, and post-processing tools built from trellis.cpp" \
+LABEL org.opencontainers.image.title="trellis.cpp CUDA SM75" \
+      org.opencontainers.image.description="CUDA SM75/Turing image-to-3D server, CLI, and post-processing tools built from trellis.cpp" \
       org.opencontainers.image.source="https://github.com/RaresKeY/trellis.cpp" \
       org.opencontainers.image.licenses="MIT"
 

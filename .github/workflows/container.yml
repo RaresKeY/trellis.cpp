@@ -24,7 +24,7 @@ env:
 
 jobs:
   cuda:
-    name: CUDA · linux/amd64
+    name: CUDA SM75 · linux/amd64
     runs-on: ubuntu-22.04
     timeout-minutes: 120
 
@@ -79,8 +79,8 @@ jobs:
             type=semver,pattern=v{{major}}
             type=sha,prefix=sha-,format=long
           labels: |
-            org.opencontainers.image.title=trellis.cpp CUDA
-            org.opencontainers.image.description=CUDA-enabled TRELLIS.2 C++ runtime; model weights are not included
+            org.opencontainers.image.title=trellis.cpp CUDA SM75
+            org.opencontainers.image.description=CUDA SM75/Turing TRELLIS.2 C++ runtime; model weights are not included
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
 
       - name: Build and optionally publish
@@ -94,9 +94,9 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            CMAKE_CUDA_ARCHITECTURES=75;80;86;89;90;120
-            BUILD_JOBS=2
-          cache-from: type=gha,scope=trellis-cuda
-          cache-to: type=gha,mode=max,scope=trellis-cuda
+            CMAKE_CUDA_ARCHITECTURES=75
+            BUILD_JOBS=4
+          cache-from: type=gha,scope=trellis-cuda-sm75
+          cache-to: type=gha,mode=max,scope=trellis-cuda-sm75
           provenance: ${{ steps.publish.outputs.push == 'true' && 'mode=max' || 'false' }}
           sbom: ${{ steps.publish.outputs.push == 'true' }}

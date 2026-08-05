@@ -139,6 +139,7 @@ if(TRELLIS_WEBP)
   endif()
   FetchContent_Declare(libwebp
     URL https://github.com/webmproject/libwebp/archive/refs/tags/v1.5.0.tar.gz
+    URL_HASH SHA256=668c9aba45565e24c27e17f7aaf7060a399f7f31dba6c97a044e1feacb930f37
     ${TRELLIS_WEBP_FETCH_TIMESTAMP_ARGS})
   FetchContent_MakeAvailable(libwebp)
   set(BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS_SAVED})
@@ -361,4 +362,3 @@ set_target_properties(trellis-server PROPERTIES BUILD_RPATH "${GGML_RPATH}")
 add_executable(trellis-test-ss-full src/test_ss_full.cpp)
 target_link_libraries(trellis-test-ss-full PRIVATE trellis_core)
 set_target_properties(trellis-test-ss-full PROPERTIES BUILD_RPATH "${GGML_RPATH}")
-
