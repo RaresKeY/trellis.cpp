@@ -229,51 +229,6 @@ jobs:
           fi
           echo "ASSET=$ASSET" >> "$GITHUB_ENV"
 
-      - name: Verify notices in Linux bundles
-        if: matrix.os == 'linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-          base=app/src-tauri/target/release/bundle
-          appimage="$(realpath "$(find "$base/appimage" -name '*.AppImage' -print -quit)")"
-          deb="$(realpath "$(find "$base/deb" -name '*.deb' -print -quit)")"
-          test -f "$appimage"
-          test -f "$deb"
-          product_name="$(python3 -c 'import json; print(json.load(open("app/src-tauri/tauri.conf.json", encoding="utf-8"))["productName"])')"
-          work="$(mktemp -d)"
-          trap 'rm -rf "$work"' EXIT
-          dpkg-deb -x "$deb" "$work/deb"
-          cmp LICENSE "$work/deb/usr/lib/$product_name/LICENSE"
-          cmp THIRD_PARTY_NOTICES.md "$work/deb/usr/lib/$product_name/THIRD_PARTY_NOTICES.md"
-          (
-            cd "$work"
-            "$appimage" --appimage-extract >/dev/null
-            cmp "$GITHUB_WORKSPACE/LICENSE" "squashfs-root/usr/lib/$product_name/LICENSE"
-            cmp "$GITHUB_WORKSPACE/THIRD_PARTY_NOTICES.md" \
-              "squashfs-root/usr/lib/$product_name/THIRD_PARTY_NOTICES.md"
-          )
-
-      - name: Verify notices in NSIS installer
-        if: matrix.os == 'windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $installer = Get-ChildItem 'app/src-tauri/target/release/bundle/nsis' -Filter '*-setup.exe' |
-            Select-Object -First 1
-          if (-not $installer) { throw 'NSIS installer not found' }
-          $payload = Join-Path $env:RUNNER_TEMP 'trellis-nsis-payload'
-          Remove-Item $payload -Recurse -Force -ErrorAction SilentlyContinue
-          New-Item $payload -ItemType Directory | Out-Null
-          & 7z x -y "-o$payload" $installer.FullName | Out-Host
-          if ($LASTEXITCODE -ne 0) { throw "7-Zip failed to extract $($installer.FullName)" }
-          foreach ($name in @('LICENSE', 'THIRD_PARTY_NOTICES.md')) {
-            $expected = (Get-FileHash (Join-Path $env:GITHUB_WORKSPACE $name) -Algorithm SHA256).Hash
-            $matched = Get-ChildItem $payload -Recurse -File -Filter $name | Where-Object {
-              (Get-FileHash $_.FullName -Algorithm SHA256).Hash -eq $expected
-            }
-            if (-not $matched) { throw "$name missing or altered in NSIS installer" }
-          }
-
       - name: Resolve release tag
         id: tag
         shell: bash
@@ -334,6 +289,51 @@ jobs:
         run: |
           npm ci
           npm run tauri build
+
+      - name: Verify notices in Linux bundles
+        if: matrix.os == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=app/src-tauri/target/release/bundle
+          appimage="$(realpath "$(find "$base/appimage" -name '*.AppImage' -print -quit)")"
+          deb="$(realpath "$(find "$base/deb" -name '*.deb' -print -quit)")"
+          test -f "$appimage"
+          test -f "$deb"
+          product_name="$(python3 -c 'import json; print(json.load(open("app/src-tauri/tauri.conf.json", encoding="utf-8"))["productName"])')"
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          dpkg-deb -x "$deb" "$work/deb"
+          cmp LICENSE "$work/deb/usr/lib/$product_name/LICENSE"
+          cmp THIRD_PARTY_NOTICES.md "$work/deb/usr/lib/$product_name/THIRD_PARTY_NOTICES.md"
+          (
+            cd "$work"
+            "$appimage" --appimage-extract >/dev/null
+            cmp "$GITHUB_WORKSPACE/LICENSE" "squashfs-root/usr/lib/$product_name/LICENSE"
+            cmp "$GITHUB_WORKSPACE/THIRD_PARTY_NOTICES.md" \
+              "squashfs-root/usr/lib/$product_name/THIRD_PARTY_NOTICES.md"
+          )
+
+      - name: Verify notices in NSIS installer
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = Get-ChildItem 'app/src-tauri/target/release/bundle/nsis' -Filter '*-setup.exe' |
+            Select-Object -First 1
+          if (-not $installer) { throw 'NSIS installer not found' }
+          $payload = Join-Path $env:RUNNER_TEMP 'trellis-nsis-payload'
+          Remove-Item $payload -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item $payload -ItemType Directory | Out-Null
+          & 7z x -y "-o$payload" $installer.FullName | Out-Host
+          if ($LASTEXITCODE -ne 0) { throw "7-Zip failed to extract $($installer.FullName)" }
+          foreach ($name in @('LICENSE', 'THIRD_PARTY_NOTICES.md')) {
+            $expected = (Get-FileHash (Join-Path $env:GITHUB_WORKSPACE $name) -Algorithm SHA256).Hash
+            $matched = Get-ChildItem $payload -Recurse -File -Filter $name | Where-Object {
+              (Get-FileHash $_.FullName -Algorithm SHA256).Hash -eq $expected
+            }
+            if (-not $matched) { throw "$name missing or altered in NSIS installer" }
+          }
 
       - name: Resolve release tag
         id: tag
