@@ -5,7 +5,8 @@
 //                      fields "seed", "resolution" (512/1024/1536), "bg_removal"
 //                      (threshold|birefnet), "uv" (xatlas = default, unique
 //                      chart space; box = faster projection), "band" (narrow-band
-//                      DC remesh band width), per-stage sampler overrides, and
+//                      DC remesh band width), per-stage sampler overrides,
+//                      "max_cascade_tokens", "dense_policy", and
 //                      "c2s_diagnostics" (on/off). Returns model/gltf-binary.
 //
 // Launch-time defaults come from CLI flags (see trellis::parse_args);
@@ -149,6 +150,28 @@ int main(int argc, char** argv) {
             set_json_error(res, 400, sampler_error);
             return;
         }
+
+        std::string density_error;
+        if (req.has_file("max_cascade_tokens") &&
+            !trellis::set_density_option(
+                "max_cascade_tokens",
+                req.get_file_value("max_cascade_tokens").content,
+                p, density_error)) {
+            set_json_error(res, 400, density_error);
+            return;
+        }
+        if (req.has_file("dense_policy") &&
+            !trellis::set_density_option(
+                "dense_policy", req.get_file_value("dense_policy").content,
+                p, density_error)) {
+            set_json_error(res, 400, density_error);
+            return;
+        }
+        if (!trellis::validate_density_params(p, density_error)) {
+            set_json_error(res, 400, density_error);
+            return;
+        }
+
         if (req.has_file("c2s_diagnostics")) {
             const std::string& value = req.get_file_value("c2s_diagnostics").content;
             if (value == "on" || value == "1" || value == "true") {
@@ -169,6 +192,7 @@ int main(int argc, char** argv) {
 
         std::string glb;
         std::string error_message = "3D reconstruction failed";
+        int run_rc = trellis::kRunSuccess;
         {
             std::lock_guard<std::mutex> lk(gen_mu);
             if (!write_file_bytes(p.image, image.content)) {
@@ -180,8 +204,12 @@ int main(int argc, char** argv) {
                     image.content.size(), p.seed, p.cascade ? std::to_string(p.hr_res).c_str() : "512",
                     p.birefnet < 0 ? "auto" : (p.birefnet ? "birefnet" : "threshold"), p.xatlas ? "xatlas" : "box");
             try {
-                int rc = trellis_run(p);
-                if (rc == 0) glb = read_file_bytes(p.output);
+                run_rc = trellis_run(p);
+                if (run_rc == trellis::kRunSuccess) {
+                    glb = read_file_bytes(p.output);
+                } else if (run_rc == trellis::kRunCascadeDensityExceeded) {
+                    error_message = "cascade density limit exceeded";
+                }
             } catch (const std::exception& e) {
                 fprintf(stderr, "[trellis-server] generate failed: %s\n", e.what());
                 error_message = e.what();
@@ -194,7 +222,9 @@ int main(int argc, char** argv) {
         }
 
         if (glb.empty()) {
-            set_json_error(res, 500, error_message);
+            const int status =
+                run_rc == trellis::kRunCascadeDensityExceeded ? 422 : 500;
+            set_json_error(res, status, error_message);
             return;
         }
         res.set_content(glb.data(), glb.size(), "model/gltf-binary");
