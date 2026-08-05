@@ -223,7 +223,7 @@ const char* dense_guard_action_name(DenseGuardAction action) noexcept {
 bool set_density_option(const std::string& name, const std::string& value,
                         TrellisParams& p, std::string& error) {
     const std::string key = sampler_key(name);
-    if (key == "max_cascade_tokens") {
+    if (key == "max_cascade_tokens" || key == "max_1024_tokens") {
         int parsed = 0;
         if (!parse_strict_int(value, parsed)) {
             error = "max_cascade_tokens must be a base-10 integer";
@@ -386,7 +386,7 @@ bool parse_args(int argc, char** argv, TrellisParams& p) {
         else if (a == "-s" || a == "--seed")    { const char* v = need(a.c_str()); if (!v) return false; p.seed = (uint32_t)atoi(v); }
         else if (a == "--res")                  { const char* v = need(a.c_str()); if (!v) return false; p.set_res(atoi(v)); }
         else if (a == "--max-tokens")           { const char* v = need(a.c_str()); if (!v) return false; p.max_tokens = atoi(v); }
-        else if (a == "--max-cascade-tokens")   { const char* v = need(a.c_str()); if (!v) return false;
+        else if (a == "--max-cascade-tokens" || a == "--max-1024-tokens") { const char* v = need(a.c_str()); if (!v) return false;
                                                   std::string error;
                                                   if (!set_density_option(a, v, p, error)) {
                                                       fprintf(stderr, "[trellis] %s\n", error.c_str());
