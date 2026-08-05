@@ -59,12 +59,65 @@ jobs:
           test -s LICENSE
           test -s THIRD_PARTY_NOTICES.md
           test -s thirdparty/cpp-httplib/LICENSE
-          grep -Fq 'Copyright (c) 2025 Jianfeng XIANG' THIRD_PARTY_NOTICES.md
-          grep -Fq 'Copyright (C) 2000, Intel Corporation' THIRD_PARTY_NOTICES.md
-          grep -Fq 'Copyright (c) 2010, Google Inc.' THIRD_PARTY_NOTICES.md
-          grep -Fq 'cp LICENSE THIRD_PARTY_NOTICES.md dist/' .github/workflows/release.yml
+          test -s thirdparty/nvidia-cuda-runtime/README.md
 
-      - name: Resolve pinned CUDA license inputs
+          for section in \
+            'Microsoft TRELLIS.2' \
+            'CuMesh-derived post-processing code' \
+            'xatlas' \
+            'meshoptimizer v0.24' \
+            'Fast Quadric Mesh Simplification (FQMS)' \
+            'stb' \
+            'cpp-httplib v0.18.7' \
+            'ggml (trellis-patches branch)' \
+            'libwebp v1.5.0' \
+            'OpenCV-derived Telea inpainting' \
+            'NVIDIA CUDA runtime redistributables' \
+            'Model weights and converted model files'
+          do
+            grep -Fq "## $section" THIRD_PARTY_NOTICES.md
+          done
+
+          for source in \
+            include/remesh_dc.h include/uv_bake.h \
+            src/decimate_qem.cpp src/decimate_qem.cu src/decimate_qem_vk.cpp \
+            src/decimate_qem.comp src/remesh_dc.cpp src/uv_bake.cpp
+          do
+            grep -Fq 'CuMesh' "$source"
+          done
+          grep -Fq 'OpenCV' src/uv_bake.cpp
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          config_path = Path("app/src-tauri/tauri.conf.json")
+          config = json.loads(config_path.read_text(encoding="utf-8"))
+          resources = config.get("bundle", {}).get("resources", {})
+          expected = {
+              "../../LICENSE": "LICENSE",
+              "../../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
+          }
+          for source, target in expected.items():
+              assert resources.get(source) == target, (
+                  f"missing Tauri resource mapping: {source} -> {target}"
+              )
+              source_path = (config_path.parent / source).resolve()
+              assert source_path == Path(target).resolve()
+              assert source_path.is_file() and source_path.stat().st_size
+          PY
+
+          release=.github/workflows/release.yml
+          grep -Fq "cuda: '13.1.0'" "$release"
+          grep -Fq 'cp LICENSE THIRD_PARTY_NOTICES.md dist/' "$release"
+          grep -Fq 'NVIDIA-CUDA-LICENSES' "$release"
+          grep -Fq 'cuda_cudart/LICENSE.txt' "$release"
+          grep -Fq 'libcublas/LICENSE.txt' "$release"
+          grep -Fq "find dist -maxdepth 1 -type f" "$release"
+          ! grep -Fq "find dist -type f" "$release"
+          grep -Fq 'Verify notices in Linux bundles' "$release"
+          grep -Fq 'Verify notices in NSIS installer' "$release"
+
+      - name: Verify pinned CUDA license inputs
         shell: bash
         run: |
           set -euo pipefail
@@ -74,9 +127,9 @@ jobs:
           curl --fail --silent --show-error --location --retry 3 \
             https://developer.download.nvidia.com/compute/cuda/redist/libcublas/LICENSE.txt \
             --output /tmp/libcublas-LICENSE.txt
-          test -s /tmp/cuda-cudart-LICENSE.txt
-          test -s /tmp/libcublas-LICENSE.txt
-          sha256sum /tmp/cuda-cudart-LICENSE.txt /tmp/libcublas-LICENSE.txt
+          expected=e2c71babfd18a8e69542dd7e9ca018f9caa438094001a58e6bc4d8c999bf0d07
+          echo "$expected  /tmp/cuda-cudart-LICENSE.txt" | sha256sum --check -
+          echo "$expected  /tmp/libcublas-LICENSE.txt" | sha256sum --check -
 
       - name: Test GLB topology diagnostics
         run: >
