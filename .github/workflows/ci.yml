@@ -85,3 +85,9 @@ jobs:
         run: |
           ./build/trellis-cli --help
           ./build/trellis-server --help
+          ./build/post-replay --help
+          set +e
+          ./build/post-replay ignored.bin ignored.glb --webp invalid
+          status=$?
+          set -e
+          test "$status" -eq 2
