@@ -5,8 +5,8 @@
 //                      fields "seed", "resolution" (512/1024/1536), "bg_removal"
 //                      (threshold|birefnet), "uv" (xatlas = default, unique
 //                      chart space; box = faster projection), "band" (narrow-band
-//                      DC remesh band width, default 1 — see --band). Returns
-//                      model/gltf-binary.
+//                      DC remesh band width), and per-stage sampler overrides.
+//                      Returns model/gltf-binary.
 //
 // Launch-time defaults come from CLI flags (see trellis::parse_args);
 // each request copies those defaults and applies its own overrides. The model
@@ -37,6 +37,37 @@ bool write_file_bytes(const std::string& path, const std::string& data) {
     f.write(data.data(), (std::streamsize) data.size());
     return f.good();
 }
+
+std::string json_escape(const std::string& value) {
+    std::string escaped;
+    for (char c : value) {
+        switch (c) {
+            case '"':  escaped += "\\\""; break;
+            case '\\': escaped += "\\\\"; break;
+            case '\n': escaped += "\\n";  break;
+            case '\r': escaped += "\\r";  break;
+            case '\t': escaped += "\\t";  break;
+            default:
+                if (static_cast<unsigned char>(c) >= 0x20) escaped += c;
+        }
+    }
+    return escaped;
+}
+
+void set_json_error(httplib::Response& res, int status, const std::string& message) {
+    res.status = status;
+    res.set_content("{\"error\":\"" + json_escape(message) + "\"}", "application/json");
+}
+
+constexpr const char* kSamplerFields[] = {
+    "sparse_steps", "sparse_guidance_strength", "sparse_guidance_rescale",
+    "sparse_guidance_interval_start", "sparse_guidance_interval_end", "sparse_rescale_t",
+    "shape_steps", "shape_guidance_strength", "shape_guidance_rescale",
+    "shape_guidance_interval_start", "shape_guidance_interval_end", "shape_rescale_t",
+    "texture_steps", "texture_guidance_strength", "texture_guidance_rescale",
+    "texture_guidance_interval_start", "texture_guidance_interval_end", "texture_rescale_t",
+    "gss", "gsh",
+};
 
 // std::tmpnam on MSVC yields drive-root paths ("\sXXX.N") that a non-elevated
 // process cannot write; stage scratch files in the real temp directory instead.
@@ -105,6 +136,20 @@ int main(int argc, char** argv) {
                    : (w == "on"  || w == "1" || w == "true")  ? 1 : -1;
         }
 
+        std::string sampler_error;
+        for (const char* field : kSamplerFields) {
+            if (!req.has_file(field)) continue;
+            if (!trellis::set_sampler_option(
+                    field, req.get_file_value(field).content, p, sampler_error)) {
+                set_json_error(res, 400, sampler_error);
+                return;
+            }
+        }
+        if (!trellis::validate_sampler_params(p, sampler_error)) {
+            set_json_error(res, 400, sampler_error);
+            return;
+        }
+
         const std::string stem = temp_stem();
         p.image  = stem + ".png";
         p.output = stem + ".glb";
@@ -136,21 +181,7 @@ int main(int argc, char** argv) {
         }
 
         if (glb.empty()) {
-            res.status = 500;
-            std::string escaped;
-            for (char c : error_message) {
-                switch (c) {
-                    case '"':  escaped += "\\\""; break;
-                    case '\\': escaped += "\\\\"; break;
-                    case '\n': escaped += "\\n";  break;
-                    case '\r': escaped += "\\r";  break;
-                    case '\t': escaped += "\\t";  break;
-                    default:
-                        if ((unsigned char)c < 0x20) break;
-                        escaped += c;
-                }
-            }
-            res.set_content("{\"error\":\"" + escaped + "\"}", "application/json");
+            set_json_error(res, 500, error_message);
             return;
         }
         res.set_content(glb.data(), glb.size(), "model/gltf-binary");
