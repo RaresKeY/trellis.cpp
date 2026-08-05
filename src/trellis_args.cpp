@@ -250,6 +250,7 @@ void print_usage(const char* argv0, bool server) {
         "      --<stage>-rescale-t F\n"
         "      --gss F  --gsh F    legacy sparse/shape guidance aliases\n"
         "      --host H  --port P  trellis-server bind address\n"
+        "      --c2s-diagnostics   log C2S subdivision, chunking, and graph allocation\n"
         "      --voxply            also dump the voxel point cloud as .ply\n"
         "      --dump-slat         dump the structured latent to disk\n"
         "  -h, --help              show this help\n");
@@ -303,6 +304,7 @@ bool parse_args(int argc, char** argv, TrellisParams& p) {
                                                   } }
         else if (a == "--host")                 { const char* v = need(a.c_str()); if (!v) return false; p.host = v; }
         else if (a == "--port")                 { const char* v = need(a.c_str()); if (!v) return false; p.port = atoi(v); }
+        else if (a == "--c2s-diagnostics")      { p.c2s_diagnostics = true; }
         else if (a == "--voxply")               { p.voxply = true; }
         else if (a == "--dump-slat")            { p.dump_slat = true; }
         else if (!a.empty() && a[0] == '-')     { fprintf(stderr, "[trellis] unknown option: %s\n", a.c_str()); return false; }
