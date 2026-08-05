@@ -149,7 +149,9 @@ if(TARGET ggml-cuda)
     target_compile_options(trellis_core PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/Zc:preprocessor>")
   endif()
   target_compile_definitions(trellis_core PUBLIC TRELLIS_HAVE_GPU_DECIMATE)
-  set_target_properties(trellis_core PROPERTIES CUDA_ARCHITECTURES "86;120" CUDA_RUNTIME_LIBRARY Shared)
+  # CMAKE_CUDA_ARCHITECTURES is set before trellis_core is created, so this
+  # target inherits either the caller's requested architectures or our defaults.
+  set_target_properties(trellis_core PROPERTIES CUDA_RUNTIME_LIBRARY Shared)
   target_link_libraries(trellis_core PUBLIC CUDA::cudart)
   message(STATUS "trellis.cpp: CUDA backend enabled (${GGML_CUDA_LIB})")
 else()
