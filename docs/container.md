@@ -32,6 +32,12 @@ The workflow can also be run manually; publication is limited to `main` and
 The first versioned package is created only after a valid version tag is pushed;
 the repository does not synthesize a release tag.
 
+GitHub creates a new Container registry package under a personal account as
+private, even when its source repository is public. After the first successful
+`main` publication, open the package settings and use **Change visibility** to
+make it public if anonymous pulls are intended. Until then, authenticate before
+pulling with `docker login ghcr.io` or `podman login ghcr.io`.
+
 For reproducible deployments, use the `sha-<commit>` tag or the immutable digest
 shown by GitHub Packages instead of a moving major, minor, `main`, or `latest`
 tag.
