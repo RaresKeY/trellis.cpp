@@ -4,13 +4,17 @@
 // post-processing.
 //
 //   post-replay <dump.bin> <out.glb> [--box-uv] [--faces N] [--atlas T]
-//               [--decim GRID] [--no-weld] [--no-fill]
+//               [--also-atlas T] [--webp on|off] [--decim GRID]
+//               [--no-weld] [--no-fill]
 #include "uv_bake.h"
 #include "tri_bvh.h"
 #include "remesh_dc.h"
 #include "mesh_glb.h"
+#include <cerrno>
 #include <chrono>
+#include <climits>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -19,6 +23,42 @@ using trellis::VoxelPbr;
 
 static double now() {
     return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+static void print_usage(FILE* stream, const char* argv0) {
+    fprintf(stream,
+        "usage: %s <dump.bin> <out.glb> [options]\n"
+        "\n"
+        "options:\n"
+        "  --box-uv          use box-projected UVs\n"
+        "  --faces N         QEM target face count (default 300000)\n"
+        "  --atlas T         primary texture atlas size (default 2048)\n"
+        "  --also-atlas T    write a second GLB from the same mesh at atlas size T\n"
+        "  --webp on|off     request WebP textures or force PNG (default on; PNG fallback)\n"
+        "  --decim GRID      cluster decimation grid; 0 copies the remeshed mesh\n"
+        "  --band N          narrow-band remesh width (default 1)\n"
+        "  --no-weld         skip initial vertex welding\n"
+        "  --no-fill         skip initial small-hole filling\n"
+        "  --no-bake         stop before UV baking and GLB writing\n"
+        "  --no-remesh       skip narrow-band remeshing\n"
+        "  --no-snap         disable texture lookup snapping\n"
+        "  -h, --help        show this help\n",
+        argv0);
+}
+
+static bool parse_int_option(const char* option, const char* value,
+                             int min_value, int max_value, int& result) {
+    errno = 0;
+    char* end = nullptr;
+    const long parsed = std::strtol(value, &end, 10);
+    if (errno == ERANGE || end == value || *end != '\0' ||
+        parsed < min_value || parsed > max_value) {
+        fprintf(stderr, "%s expects an integer in [%d, %d], got '%s'\n",
+                option, min_value, max_value, value);
+        return false;
+    }
+    result = static_cast<int>(parsed);
+    return true;
 }
 
 // boundary/non-manifold audit over the welded index space (positions assumed welded)
@@ -37,24 +77,66 @@ static void audit(const char* tag, const std::vector<int32_t>& faces) {
 }
 
 int main(int argc, char** argv) {
-    if (argc < 3) { fprintf(stderr, "usage: post-replay <dump.bin> <out.glb> [opts]\n"); return 1; }
+    if (argc == 2 && (!std::strcmp(argv[1], "-h") || !std::strcmp(argv[1], "--help"))) {
+        print_usage(stdout, argv[0]);
+        return 0;
+    }
+    if (argc < 3) {
+        print_usage(stderr, argv[0]);
+        return 1;
+    }
+
     const char* dump = argv[1];
     const char* out = argv[2];
     bool boxuv = false, do_weld = true, do_fill = true, do_bake = true, do_remesh = true, do_snap = true;
+    bool use_webp = true;
     int band = 1;
-    int faces_target = 300000, atlas = 2048, decim = -1;
+    int faces_target = 300000, atlas = 2048, also_atlas = 0, decim = -1;
     for (int i = 3; i < argc; ++i) {
-        std::string a = argv[i];
+        const std::string a = argv[i];
+        auto parse_next_int = [&](int min_value, int max_value, int& result) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "%s requires a value\n", a.c_str());
+                return false;
+            }
+            return parse_int_option(a.c_str(), argv[++i], min_value, max_value, result);
+        };
+
         if (a == "--box-uv") boxuv = true;
-        else if (a == "--faces" && i+1 < argc) faces_target = atoi(argv[++i]);
-        else if (a == "--atlas" && i+1 < argc) atlas = atoi(argv[++i]);
-        else if (a == "--decim" && i+1 < argc) decim = atoi(argv[++i]);
-        else if (a == "--no-weld") do_weld = false;
+        else if (a == "--faces") {
+            if (!parse_next_int(1, INT_MAX, faces_target)) return 2;
+        } else if (a == "--atlas") {
+            if (!parse_next_int(1, INT_MAX, atlas)) return 2;
+        } else if (a == "--also-atlas") {
+            if (!parse_next_int(1, INT_MAX, also_atlas)) return 2;
+        } else if (a == "--webp") {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "--webp requires on or off\n");
+                return 2;
+            }
+            const std::string value = argv[++i];
+            if (value == "on") use_webp = true;
+            else if (value == "off") use_webp = false;
+            else {
+                fprintf(stderr, "--webp must be on or off, got '%s'\n", value.c_str());
+                return 2;
+            }
+        } else if (a == "--decim") {
+            if (!parse_next_int(INT_MIN, INT_MAX, decim)) return 2;
+        } else if (a == "--no-weld") do_weld = false;
         else if (a == "--no-fill") do_fill = false;
         else if (a == "--no-bake") do_bake = false;
         else if (a == "--no-remesh") do_remesh = false;
-        else if (a == "--band" && i+1 < argc) band = atoi(argv[++i]);
-        else if (a == "--no-snap") do_snap = false;
+        else if (a == "--band") {
+            if (!parse_next_int(1, INT_MAX, band)) return 2;
+        } else if (a == "--no-snap") do_snap = false;
+        else if (a == "-h" || a == "--help") {
+            print_usage(stdout, argv[0]);
+            return 0;
+        } else {
+            fprintf(stderr, "unknown option: %s\n", a.c_str());
+            return 2;
+        }
     }
 
     FILE* f = fopen(dump, "rb");
@@ -121,18 +203,46 @@ int main(int argc, char** argv) {
 
     VoxelPbr vox{&coords, &pbr6, res, do_snap ? &bvh : nullptr};
     const std::vector<float> no_vp;
-    trellis::BakedMesh bm = boxuv
-        ? trellis::uv_box_project(dv, (int)dv.size()/3, df, (int)df.size()/3, no_vp, atlas, &vox)
-        : trellis::uv_bake(dv, (int)dv.size()/3, df, (int)df.size()/3, no_vp, atlas, &vox);
-    if (!boxuv && !bm.ok())
-        bm = trellis::uv_chart_project(dv, (int)dv.size()/3, df, (int)df.size()/3, no_vp, atlas, &vox);
-    printf("  [bake %.1fs]\n", now()-t);
-    if (!bm.ok()) { fprintf(stderr, "bake failed\n"); return 1; }
-    printf("  [audit] bake: faces in=%zu out=%zu (dropped %lld)\n",
-           df.size()/3, bm.faces.size()/3, (long long)(df.size()/3) - (long long)(bm.faces.size()/3));
-    trellis::write_glb_textured(out, bm.verts.data(), (int64_t)bm.verts.size()/3, bm.uv.data(),
-                                bm.faces.data(), (int64_t)bm.faces.size()/3, bm.base.data(), bm.mr.data(), bm.T,
-                                /*double_sided=*/rm.F() == 0);
-    printf("wrote %s (atlas %d)\n", out, bm.T);
+    auto bake_and_write = [&](int atlas_size, const char* output) -> bool {
+        const double bake_start = now();
+        trellis::BakedMesh bm = boxuv
+            ? trellis::uv_box_project(dv, (int)dv.size()/3, df, (int)df.size()/3,
+                                      no_vp, atlas_size, &vox)
+            : trellis::uv_bake(dv, (int)dv.size()/3, df, (int)df.size()/3,
+                               no_vp, atlas_size, &vox);
+        if (!boxuv && !bm.ok())
+            bm = trellis::uv_chart_project(dv, (int)dv.size()/3, df, (int)df.size()/3,
+                                           no_vp, atlas_size, &vox);
+        printf("  [bake atlas=%d %.1fs]\n", atlas_size, now() - bake_start);
+        if (!bm.ok()) {
+            fprintf(stderr, "bake failed for atlas %d\n", atlas_size);
+            return false;
+        }
+        printf("  [audit] bake atlas=%d: faces in=%zu out=%zu (dropped %lld)\n",
+               atlas_size, df.size()/3, bm.faces.size()/3,
+               (long long)(df.size()/3) - (long long)(bm.faces.size()/3));
+        if (!trellis::write_glb_textured(
+                output, bm.verts.data(), (int64_t)bm.verts.size()/3, bm.uv.data(),
+                bm.faces.data(), (int64_t)bm.faces.size()/3,
+                bm.base.data(), bm.mr.data(), bm.T,
+                /*double_sided=*/rm.F() == 0, /*seed=*/-1,
+                /*copyright=*/nullptr, use_webp)) {
+            fprintf(stderr, "cannot write %s\n", output);
+            return false;
+        }
+        printf("wrote %s (atlas %d)\n", output, bm.T);
+        return true;
+    };
+    if (!bake_and_write(atlas, out)) return 1;
+    if (also_atlas > 0) {
+        std::string also_out(out);
+        const std::string suffix = "-atlas" + std::to_string(also_atlas);
+        if (also_out.size() >= 4 &&
+            also_out.compare(also_out.size() - 4, 4, ".glb") == 0)
+            also_out.insert(also_out.size() - 4, suffix);
+        else
+            also_out += suffix + ".glb";
+        if (!bake_and_write(also_atlas, also_out.c_str())) return 1;
+    }
     return 0;
 }
