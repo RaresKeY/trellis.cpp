@@ -94,6 +94,20 @@ int main() {
     CHECK(range.quality_faces >= range.output_faces);
     if (range.forced) CHECK(!range.error_met);
 
+    // On this flat 800-face grid, a raw meshoptimizer target of 18 returns 17
+    // faces. The protected retry must raise the internal target and return a
+    // safe candidate instead.
+    bounded.min_faces = 18;
+    bounded.max_faces = 800;
+    bounded.max_error_percent = 100.0f;
+    const auto protected_floor = trellis::decimate_meshopt_adaptive(
+        flat_vertices, static_cast<int>(flat_vertices.size() / 3),
+        flat_faces, static_cast<int>(flat_faces.size() / 3),
+        bounded, out_vertices, out_faces);
+    CHECK(protected_floor.output_faces >= bounded.min_faces);
+    CHECK(protected_floor.output_faces <= bounded.max_faces);
+    CHECK(protected_floor.min_met);
+
     std::puts("simplify mode tests passed");
     return 0;
 }
