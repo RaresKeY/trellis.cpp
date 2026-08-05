@@ -292,10 +292,15 @@ and still trails Vulkan by 10–40 %.
 
 | tool | purpose |
 |------|---------|
-| `post-replay <dump.bin> <out.glb>` | re-run the whole postprocess from a `TRELLIS_DUMP_POST` dump in seconds (flags: `--no-remesh`, `--band`, `--no-snap`, `--box-uv`, `--faces`, `--atlas`, …) |
+| `post-replay <dump.bin> <out.glb>` | re-run the whole postprocess from a `TRELLIS_DUMP_POST` dump in seconds (flags: `--no-remesh`, `--band`, `--no-snap`, `--box-uv`, `--faces`, `--meshopt`, `--atlas`, …) |
 | `tools/glb_metrics.py` | CPU geometry/UV/material metrics (components, boundary edges, winding, texel density, doubleSided/WebP flags) for ours-vs-reference GLB comparison |
 | `tools/render_glb.py` / `render_glb_fast.py` | quick multi-view flat renders |
 | `tools/mv_preview/` | PBR-correct GLB previews via the `<model-viewer>` web component (see its README) |
+
+`post-replay` uses the production QEM decimator by default. Its optional
+`--meshopt` mode keeps meshoptimizer's topology guards and disables the historical
+FQMS fallback; on difficult voxel meshes it may stop above `--faces` rather than
+silently switching algorithms. `--meshopt` and `--decim` are mutually exclusive.
 
 ## Building
 
