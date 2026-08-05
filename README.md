@@ -173,6 +173,29 @@ inpaint port, and exported as a GLB with smooth normals and **lossy-WebP texture
 (`EXT_texture_webp`; PNG fallback when built with `-DTRELLIS_WEBP=OFF`). Output
 quality is at parity with the reference CUDA postprocess on identical inputs.
 
+### GLB diagnostics
+
+`tools/glb_topology.py` is a dependency-free checker for triangle GLBs emitted
+by trellis.cpp:
+
+```bash
+python3 tools/glb_topology.py out/model.glb
+python3 tools/glb_topology.py --weld-tolerance 1e-6 out/qem.glb out/meshopt.glb
+```
+
+It reports vertex and face counts, bounds, invalid indices, non-finite positions,
+raw and seam-insensitive topology, connected components, embedded image MIME
+types, and required extensions. Raw topology retains UV/attribute vertex splits;
+`welded@...` groups positions into quantized cells of the requested width, so it
+is not an exact Euclidean-distance weld.
+
+This tool is specialized diagnostics, not a general glTF validator. Exit status
+`1` means a file was unreadable, unsupported, malformed, or contained invalid
+indices or non-finite positions; reported boundary, non-manifold, degenerate,
+component, image, and extension counts are informational. Use the
+[Khronos glTF Validator](https://github.com/KhronosGroup/glTF-Validator) for
+full format conformance.
+
 `TRELLIS_DBG_*` environment variables toggle developer debug logging only; no
 behavior-driving environment variables remain — use the flags above.
 `--c2s-diagnostics` enables request-scoped subdivision, memory, graph-allocation,
