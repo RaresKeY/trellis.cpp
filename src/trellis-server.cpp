@@ -2,7 +2,8 @@
 //
 //   GET  /health     -> "ok"
 //   POST /generate    multipart/form-data with an "image" file part; optional text
-//                      fields "seed", "resolution" (512/1024/1536), "bg_removal"
+//                      fields "seed", "resolution" (512/1024/1536), "pipeline"
+//                      (512|1024-direct|1024-cascade|1536-cascade), "bg_removal"
 //                      (threshold|birefnet), "uv" (xatlas = default, unique
 //                      chart space; box = faster projection), "band" (narrow-band
 //                      DC remesh band width), per-stage sampler overrides,
@@ -127,7 +128,27 @@ int main(int argc, char** argv) {
         // Per-request params start from the launch defaults, then apply overrides.
         trellis::TrellisParams p = base;
         if (req.has_file("seed")) p.seed = (uint32_t) atoi(req.get_file_value("seed").content.c_str());
-        if (req.has_file("resolution")) p.set_res(atoi(req.get_file_value("resolution").content.c_str()));
+        const bool has_resolution = req.has_file("resolution");
+        const bool has_pipeline = req.has_file("pipeline");
+        if (has_resolution && has_pipeline) {
+            set_json_error(res, 400, "resolution and pipeline are mutually exclusive");
+            return;
+        }
+        std::string pipeline_error;
+        if (has_resolution && !trellis::set_resolution_option(
+                req.get_file_value("resolution").content, p, pipeline_error)) {
+            set_json_error(res, 400, pipeline_error);
+            return;
+        }
+        if (has_pipeline && !trellis::set_pipeline_option(
+                req.get_file_value("pipeline").content, p, pipeline_error)) {
+            set_json_error(res, 400, pipeline_error);
+            return;
+        }
+        if (!trellis::validate_pipeline_params(p, pipeline_error)) {
+            set_json_error(res, 400, pipeline_error);
+            return;
+        }
         if (req.has_file("bg_removal")) p.birefnet = (req.get_file_value("bg_removal").content == "birefnet") ? 1 : 0;
         if (req.has_file("uv")) p.xatlas = (req.get_file_value("uv").content == "xatlas");
         if (req.has_file("band")) p.band = atoi(req.get_file_value("band").content.c_str());
@@ -209,9 +230,10 @@ int main(int argc, char** argv) {
                 res.set_content("{\"error\":\"failed to stage input image\"}", "application/json");
                 return;
             }
-            fprintf(stderr, "[trellis-server] generate: %zu-byte image, seed %u, res %s, bg %s, uv %s\n",
-                    image.content.size(), p.seed, p.cascade ? std::to_string(p.hr_res).c_str() : "512",
-                    p.birefnet < 0 ? "auto" : (p.birefnet ? "birefnet" : "threshold"), p.xatlas ? "xatlas" : "box");
+            fprintf(stderr, "[trellis-server] generate: %zu-byte image, seed %u, pipeline %s, bg %s, uv %s\n",
+                    image.content.size(), p.seed, trellis::pipeline_name(p),
+                    p.birefnet < 0 ? "auto" : (p.birefnet ? "birefnet" : "threshold"),
+                    p.xatlas ? "xatlas" : "box");
             try {
                 run_rc = trellis_run(p);
                 if (run_rc == trellis::kRunSuccess) {

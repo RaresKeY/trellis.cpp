@@ -127,6 +127,76 @@ bool parse_strict_float(const std::string& value, float& out) {
     return strict_float(value, out);
 }
 
+const char* pipeline_name(const TrellisParams& p) noexcept {
+    if (p.direct_1024) return "1024-direct";
+    if (!p.cascade) return p.hr_res == 512 ? "512" : "invalid";
+    if (p.hr_res == 1024) return "1024-cascade";
+    if (p.hr_res == 1536) return "1536-cascade";
+    return "invalid";
+}
+
+bool set_resolution_option(const std::string& value, TrellisParams& p,
+                           std::string& error) {
+    int resolution = 0;
+    if (!parse_strict_int(value, resolution)) {
+        error = "resolution must be a base-10 integer";
+        return false;
+    }
+    if (resolution != 512 && resolution != 1024 && resolution != 1536) {
+        error = "resolution must be 512, 1024, or 1536";
+        return false;
+    }
+    p.set_res(resolution);  // Resets direct_1024; --res 1024 is always cascade.
+    error.clear();
+    return true;
+}
+
+bool set_pipeline_option(const std::string& value, TrellisParams& p,
+                         std::string& error) {
+    if (value == "512") {
+        p.set_res(512);
+    } else if (value == "1024-cascade" || value == "1024_cascade") {
+        p.set_res(1024);
+    } else if (value == "1536-cascade" || value == "1536_cascade") {
+        p.set_res(1536);
+    } else if (value == "1024-direct" || value == "1024") {
+        p.cascade = false;
+        p.direct_1024 = true;
+        p.hr_res = 1024;
+    } else {
+        error = "pipeline must be 512, 1024-direct, 1024-cascade, or 1536-cascade";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+bool validate_pipeline_params(const TrellisParams& p, std::string& error) {
+    if (p.direct_1024) {
+        if (p.cascade || p.hr_res != 1024) {
+            error = "1024-direct requires cascade=false and hr_res=1024";
+            return false;
+        }
+        if (p.tex_res == 512) {
+            error = "1024-direct does not support 512 texture flow; "
+                    "mixed-resolution texture is cascade-only";
+            return false;
+        }
+        error.clear();
+        return true;
+    }
+    if (p.cascade && p.hr_res != 1024 && p.hr_res != 1536) {
+        error = "cascade resolution must be 1024 or 1536";
+        return false;
+    }
+    if (!p.cascade && p.hr_res != 512) {
+        error = "the non-cascade pipeline requires resolution 512";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
 bool is_sampler_option(const std::string& name) {
     return sampler_field(name) != SamplerField::none;
 }
@@ -323,7 +393,9 @@ void print_usage(const char* argv0, bool server) {
         "  -m, --models DIR        GGUF model directory\n"
         "      --gpu N             GPU index, <0 = CPU          (default 0)\n"
         "  -s, --seed N            RNG seed                     (default 42)\n"
-        "      --res 512|1024|1536 geometry resolution\n"
+        "      --res 512|1024|1536  512 light; 1024/1536 cascade\n"
+        "      --pipeline TYPE     explicit pipeline: 512 | 1024-direct |\n"
+        "                          1024-cascade | 1536-cascade (experimental)\n"
         "      --max-tokens N      HR token budget              (default 49152)\n"
         "      --max-cascade-tokens N  hard post-backoff guard; 0 disables (default 0)\n"
         "      --dense-policy MODE  fail | fallback-512 | allow (default fallback-512)\n"
@@ -365,6 +437,8 @@ void print_usage(const char* argv0, bool server) {
 
 bool parse_args(int argc, char** argv, TrellisParams& p) {
     int positional = 0;
+    bool resolution_seen = false;
+    bool pipeline_seen = false;
 
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -384,7 +458,32 @@ bool parse_args(int argc, char** argv, TrellisParams& p) {
         else if (a == "-m" || a == "--models")  { const char* v = need(a.c_str()); if (!v) return false; p.models = v; }
         else if (a == "--gpu")                  { const char* v = need(a.c_str()); if (!v) return false; p.gpu = atoi(v); }
         else if (a == "-s" || a == "--seed")    { const char* v = need(a.c_str()); if (!v) return false; p.seed = (uint32_t)atoi(v); }
-        else if (a == "--res")                  { const char* v = need(a.c_str()); if (!v) return false; p.set_res(atoi(v)); }
+        else if (a == "--res") {
+            const char* v = need(a.c_str()); if (!v) return false;
+            if (pipeline_seen) {
+                fprintf(stderr, "[trellis] --res and --pipeline are mutually exclusive\n");
+                return false;
+            }
+            std::string selector_error;
+            if (!set_resolution_option(v, p, selector_error)) {
+                fprintf(stderr, "[trellis] %s\n", selector_error.c_str());
+                return false;
+            }
+            resolution_seen = true;
+        }
+        else if (a == "--pipeline") {
+            const char* v = need(a.c_str()); if (!v) return false;
+            if (resolution_seen) {
+                fprintf(stderr, "[trellis] --res and --pipeline are mutually exclusive\n");
+                return false;
+            }
+            std::string selector_error;
+            if (!set_pipeline_option(v, p, selector_error)) {
+                fprintf(stderr, "[trellis] %s\n", selector_error.c_str());
+                return false;
+            }
+            pipeline_seen = true;
+        }
         else if (a == "--max-tokens")           { const char* v = need(a.c_str()); if (!v) return false; p.max_tokens = atoi(v); }
         else if (a == "--max-cascade-tokens" || a == "--max-1024-tokens") { const char* v = need(a.c_str()); if (!v) return false;
                                                   std::string error;
@@ -432,7 +531,8 @@ bool parse_args(int argc, char** argv, TrellisParams& p) {
         else                                    { fprintf(stderr, "[trellis] unexpected argument: %s\n", a.c_str()); return false; }
     }
     std::string validation_error;
-    if (!validate_sampler_params(p, validation_error) ||
+    if (!validate_pipeline_params(p, validation_error) ||
+        !validate_sampler_params(p, validation_error) ||
         !validate_density_params(p, validation_error)) {
         fprintf(stderr, "[trellis] %s\n", validation_error.c_str());
         return false;

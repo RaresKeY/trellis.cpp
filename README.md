@@ -106,12 +106,15 @@ scripted use.
 
 The default is the **1024 cascade** (LR `flow_512` → upsample → HR `flow_1024` →
 res-1024 decode, sharper geometry); `--res 512` selects the lighter res-512 path.
+`--res 1024` remains the cascade selector. The distinct direct path is available
+only through the explicit experimental `--pipeline 1024-direct` selector.
 All behavior is driven by CLI flags — run `trellis-cli --help` for the full list.
 The most useful ones:
 
 | flag | effect |
 |------|--------|
-| `--res 512\|1024\|1536` | geometry resolution (512 = light path, no cascade) |
+| `--res 512\|1024\|1536` | geometry resolution (512 = light path; 1024/1536 = cascade) |
+| `--pipeline 1024-direct` | experimental native res-64 sparse-structure path; not the default |
 | `--max-cascade-tokens N` | optional post-backoff cascade token guard; `0` disables it (default) |
 | `--dense-policy MODE` | action above the guard: `fail`, `fallback-512`, or `allow` |
 | `--bg-removal threshold\|birefnet` | default **auto**: pre-matted images keep their alpha, otherwise the BiRefNet matte (~13s on GPU). The plain white-bg keyer cuts specular highlights out of the alpha — the flow then generates holes there — so it is opt-in only |
@@ -137,8 +140,8 @@ Each stage accepts `--<stage>-steps`, `--<stage>-guidance`,
 `--<stage>-guidance-end`, and `--<stage>-rescale-t`. `--gss` and `--gsh`
 remain aliases for sparse and shape guidance, and the existing
 `TrellisParams::gss` / `TrellisParams::gsh` source fields remain supported.
-Shape controls apply to both the low-resolution and cascade high-resolution
-shape passes.
+Shape controls apply to the low-resolution and cascade high-resolution shape
+passes, as well as the experimental direct-1024 shape flow.
 
 Steps must be in 1–1000. Guidance must be finite and non-negative; guidance
 rescale must be finite and in `[0,1]`; interval endpoints must satisfy
@@ -160,6 +163,27 @@ HTTP 400, while a valid `fail` policy that trips returns HTTP 422. Hardware-spec
 limits should be configured by the deployment rather than baked into the library.
 The former `--max-1024-tokens` / `max_1024_tokens` names remain accepted as
 compatibility aliases for the private v0.5.4 patch.
+
+### Experimental direct 1024
+
+`--pipeline 1024-direct` keeps the sparse decoder's native res-64 coordinates,
+skips the cascade's 512 shape-flow and decoder-upsample stages, and runs the
+1024 DINOv3, shape, and texture paths directly. The sparse-structure flow itself
+continues to use the 512 conditioning used by the reference implementation.
+Because this path has no low-resolution shape SLAT to reuse, the cascade density
+guard/fallback and mixed res-512 texture path do not apply. `--tex-res 512` is
+therefore rejected with direct 1024.
+
+This selector is retained for controlled A/B work, not recommended as a new
+default. On the recorded FP16 goblin comparison it took 422.921 seconds versus
+428.475 seconds for cascade (5.554 seconds, or 1.3%, faster), used 8,082 versus
+8,076 MiB peak VRAM, and both runs reached 89 °C. Direct sharpened some helmet,
+axe, and armor features but introduced slit-like holes through both ears and a
+small opening near the gripping hand; cascade produced the better overall mesh.
+
+The canonical selector is `1024-direct`. The exact private-patch
+`pipeline=1024`, `1024_cascade`, and `1536_cascade` spellings remain accepted
+as compatibility aliases, while logs always use the explicit canonical names.
 
 The postprocess matches the reference pipeline op for op (see
 `docs/spec/27-reference-postprocess.md` / `28-divergence-matrix.md`): the raw
@@ -209,12 +233,15 @@ off by default and does not change allocation or generation behavior.
 ```
 GET  /health     -> "ok"
 POST /generate      multipart/form-data with an "image" file part; optional text
-                    fields "seed", "resolution" (512/1024/1536), "bg_removal"
+                    fields "seed", "resolution" (512/1024/1536), "pipeline"
+                    (512/1024-direct/1024-cascade/1536-cascade), "bg_removal"
                     (threshold|birefnet). Returns model/gltf-binary.
 ```
 
-Launch-time flags (including `--res`) set the per-request defaults; each request can
-override them with its own fields. Sampler multipart fields use underscores and
+Launch-time flags (including `--res` and `--pipeline`) set the per-request
+defaults; each request can override them with its own selector field. A request
+that supplies both `resolution` and `pipeline` is rejected with HTTP 400.
+Sampler multipart fields use underscores and
 explicit strength/interval names: `sparse_steps`,
 `sparse_guidance_strength`, `sparse_guidance_rescale`,
 `sparse_guidance_interval_start`, `sparse_guidance_interval_end`, and
@@ -258,8 +285,9 @@ component with reference-level surface smoothness. It runs on the GPU (CUDA, ROC
 Vulkan compute shader) behind one dispatch, with an automatic CPU fallback.
 
 All three flow stages use a `FlowEulerGuidanceIntervalSampler` (rectified-flow Euler,
-12 steps, classifier-free guidance with a guidance interval + rescale). Optional
-512→1024 cascade for higher resolution.
+12 steps, classifier-free guidance with a guidance interval + rescale). The normal
+higher-resolution path is the 512→1024 cascade; direct 1024 is an explicitly
+experimental alternative.
 
 The 1024 cascade runs on a 16 GB card thanks to **FlashAttention with padded K/V**
 (`src/dit.cpp::sdpa`): the manual softmax needed a single ~18 GB score-matrix alloc at
@@ -282,8 +310,8 @@ folder. Or convert your own from the source checkpoints below (see `docs/spec/` 
 | role | source | notes |
 |------|--------|-------|
 | SS flow DiT | `microsoft/TRELLIS.2-4B` `ss_flow_img_dit_1_3B_64` | 1.3B, bf16 |
-| Shape SLAT flow | `…/slat_flow_img2shape_dit_1_3B_{512,1024}` | 1.3B, bf16; `_1024` drives the cascade's HR pass |
-| Tex SLAT flow | `…/slat_flow_imgshape2tex_dit_1_3B_{512,1024}` | 1.3B, bf16; `_1024` drives the cascade's HR pass |
+| Shape SLAT flow | `…/slat_flow_img2shape_dit_1_3B_{512,1024}` | 1.3B, bf16; `_1024` drives the cascade HR pass and experimental direct path |
+| Tex SLAT flow | `…/slat_flow_imgshape2tex_dit_1_3B_{512,1024}` | 1.3B, bf16; `_1024` drives the cascade HR pass and experimental direct path |
 | Shape decoder | `…/shape_dec_next_dc_f16c32` | FlexiDualGrid VAE |
 | Tex decoder | `…/tex_dec_next_dc_f16c32` | Sparse U-Net VAE, 6-ch |
 | SS decoder | `microsoft/TRELLIS-image-large` `ss_dec_conv3d_16l8` | reused from v1 |
