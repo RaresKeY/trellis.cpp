@@ -103,9 +103,10 @@ int trellis_run(const trellis::TrellisParams& cfg) {
     const std::string& outglb = cfg.output;
     const std::string& M = cfg.models;
     const int gpu = cfg.gpu;
-    const bool cascade = cfg.cascade;   // requested path; the density guard may resolve it to 512
-    const std::string requested_pipeline =
-        cascade ? std::to_string(cfg.hr_res) + "_cascade" : "512";
+    const bool cascade = cfg.cascade;   // requested cascade; the density guard may resolve it to 512
+    const bool direct_1024 = cfg.direct_1024;
+    const bool highres = cascade || direct_1024;
+    const std::string requested_pipeline = trellis::pipeline_name(cfg);
     std::mt19937 rng(run_seed); std::normal_distribution<float> randn(0.f, 1.f);
     auto noise = [&](size_t n){ vector<float> v(n); for (auto& x : v) x = randn(rng); return v; };
     double t0 = now();
@@ -137,13 +138,13 @@ int trellis_run(const trellis::TrellisParams& cfg) {
         bm.free();
         if (cutout.empty()) return 1;
         chw = trellis::normalize_cutout(cutout, cut_sz, 512);
-        if (cascade) chw1024 = trellis::normalize_cutout(cutout, cut_sz, 1024);
+        if (highres) chw1024 = trellis::normalize_cutout(cutout, cut_sz, 1024);
     } else {
         printf("[1/6] preprocess %s (%s)\n", img.c_str(), requested_pipeline.c_str());
         cutout = trellis::threshold_cutout(img, cut_sz);
         if (cutout.empty()) return 1;
         chw = trellis::normalize_cutout(cutout, cut_sz, 512);
-        if (cascade) chw1024 = trellis::normalize_cutout(cutout, cut_sz, 1024);
+        if (highres) chw1024 = trellis::normalize_cutout(cutout, cut_sz, 1024);
     }
 
     // --dump-bg: write the bg-removal cutout next to the output; --bg-only: stop here.
@@ -160,17 +161,18 @@ int trellis_run(const trellis::TrellisParams& cfg) {
     vector<float> cond, cond1024;
     { trellis::Model m = trellis::Model::load(M + "/dinov3.gguf", gpu);
       cond = trellis::dinov3_encode(m, chw, 512);
-      if (cascade) cond1024 = trellis::dinov3_encode(m, chw1024, 1024);
+      if (highres) cond1024 = trellis::dinov3_encode(m, chw1024, 1024);
       m.free(); }
     const int Lc = (int)(cond.size() / 1024);
     vector<float> neg(cond.size(), 0.0f);
-    const int Lc1024 = cascade ? (int)(cond1024.size() / 1024) : 0;
+    const int Lc1024 = highres ? (int)(cond1024.size() / 1024) : 0;
     vector<float> neg1024(cond1024.size(), 0.0f);
-    printf("      cond tokens=%d%s\n", Lc, cascade ? (" / 1024-cond tokens=" + std::to_string(Lc1024)).c_str() : "");
+    printf("      cond tokens=%d%s\n", Lc, highres ? (" / 1024-cond tokens=" + std::to_string(Lc1024)).c_str() : "");
     slat_stats("cond_512 (DINOv3@512)", cond);
-    if (cascade) slat_stats("cond_1024 (DINOv3@1024)", cond1024);
+    if (highres) slat_stats("cond_1024 (DINOv3@1024)", cond1024);
 
     printf("[3/6] sparse-structure flow + decode\n");
+    const int ss_res = direct_1024 ? 64 : 32;
     vector<std::array<int,3>> coords;
     {
         trellis::Model m = trellis::Model::load(M + "/ss_flow.gguf", gpu);
@@ -191,10 +193,10 @@ int trellis_run(const trellis::TrellisParams& cfg) {
         for (int c = 0; c < 8; ++c) for (int sp2 = 0; sp2 < 4096; ++sp2) zdec[(size_t)c*4096 + sp2] = z[c + 8*sp2];
         trellis::Model d = trellis::Model::load(M + "/ss_dec.gguf", gpu);
         vector<float> logits = trellis::ss_decode(d, zdec); d.free();
-        coords = trellis::ss_coords(logits, 64, 32);
+        coords = trellis::ss_coords(logits, 64, ss_res);
     }
-    if (cfg.voxply) { FILE*f=fopen("out/myvox.ply","wb"); fprintf(f,"ply\nformat binary_little_endian 1.0\nelement vertex %zu\nproperty float x\nproperty float y\nproperty float z\nelement face 0\nproperty list uchar int vertex_indices\nend_header\n",coords.size()); for(auto&c:coords){float p[3]={(c[0]+0.5f)/32-0.5f,(c[1]+0.5f)/32-0.5f,(c[2]+0.5f)/32-0.5f}; fwrite(p,4,3,f);} fclose(f); }
-    printf("      active voxels @res32 = %d\n", (int)coords.size());
+    if (cfg.voxply) { FILE*f=fopen("out/myvox.ply","wb"); fprintf(f,"ply\nformat binary_little_endian 1.0\nelement vertex %zu\nproperty float x\nproperty float y\nproperty float z\nelement face 0\nproperty list uchar int vertex_indices\nend_header\n",coords.size()); for(auto&c:coords){float p[3]={(c[0]+0.5f)/ss_res-0.5f,(c[1]+0.5f)/ss_res-0.5f,(c[2]+0.5f)/ss_res-0.5f}; fwrite(p,4,3,f);} fclose(f); }
+    printf("      active voxels @res%d = %d\n", ss_res, (int)coords.size());
     if (coords.empty()) { fprintf(stderr, "no voxels produced\n"); return 1; }
 
     const bool do_tex = cfg.texture;
@@ -332,19 +334,32 @@ int trellis_run(const trellis::TrellisParams& cfg) {
             Lc_dec = Lc1024;
             resolved_pipeline = std::to_string(RES) + "_cascade";
         }
+    } else if (direct_1024) {
+        printf("[4/7] shape SLAT flow (direct 1024, native res64 sparse structure)\n");
+        shc = coords;
+        slat_norm = shape_flow(
+            M + "/shape_flow_1024.gguf", shc,
+            cond1024.data(), neg1024.data(), Lc1024);
+        RES = 1024;
+        cond_dec = cond1024.data();
+        neg_dec = neg1024.data();
+        Lc_dec = Lc1024;
+        resolved_pipeline = "1024-direct";
     } else {
         printf("[4/7] shape SLAT flow (512)\n");
         shc = coords;
         slat_norm = shape_flow(M + "/shape_flow_512.gguf", coords, cond.data(), neg.data(), Lc);
     }
     log_resolution();
+    const bool resolved_highres = resolved_cascade || direct_1024;
 
     const int N = (int)shc.size();
     slat_dn.resize(slat_norm.size());
     for (int n = 0; n < N; ++n) for (int c = 0; c < 32; ++c)
         slat_dn[(size_t)c + 32*n] = slat_norm[(size_t)c + 32*n]*SHAPE_STD[c] + SHAPE_MEAN[c];
-    slat_stats(resolved_cascade ? "HR slat" : "slat (res32)", slat_dn);
-    if (resolved_cascade && cfg.dump_slat) {   // dump HR slat for the reference-decoder diff
+    slat_stats(direct_1024 ? "direct-1024 slat" :
+               (resolved_cascade ? "HR slat" : "slat (res32)"), slat_dn);
+    if (resolved_highres && cfg.dump_slat) {   // dump high-resolution slat for decoder comparisons
         FILE* f = fopen("/tmp/hr_slat.bin", "wb");
         if (f) {
             int n = N, res = RES; fwrite(&n, 4, 1, f); fwrite(&res, 4, 1, f);
@@ -401,7 +416,7 @@ int trellis_run(const trellis::TrellisParams& cfg) {
         }
         // tex flow + decode inputs: HR path (shc/slat_norm/cond_dec/so.subs) vs res-512 mixed path
         // (coords/lr_norm/cond_512/so_tex.subs). The tex decoder upsamples via the guide subdivision.
-        const std::string tflow = M + (mixed ? "/tex_flow_512.gguf" : (resolved_cascade ? "/tex_flow_1024.gguf" : "/tex_flow_512.gguf"));
+        const std::string tflow = M + (mixed ? "/tex_flow_512.gguf" : (resolved_highres ? "/tex_flow_1024.gguf" : "/tex_flow_512.gguf"));
         const vector<std::array<int,3>>& tcoords = mixed ? coords : shc;
         const vector<float>& tslat = mixed ? lr_norm : slat_norm;
         const float* tcond = mixed ? cond.data() : cond_dec;
@@ -470,7 +485,7 @@ int trellis_run(const trellis::TrellisParams& cfg) {
         // xatlas's ~superlinear chart-compute (grid 384 -> 382K faces took >9min pre-decimation),
         // occlusion-aware bucket assignment + depth-tested raster keep its bleed low.
         const bool boxuv = !cfg.xatlas;
-        const int T = cfg.tex >= 0 ? cfg.tex : (resolved_cascade ? 2048 : 1024);
+        const int T = cfg.tex >= 0 ? cfg.tex : (resolved_highres ? 2048 : 1024);
         if (const char* dp = std::getenv("TRELLIS_DUMP_POST")) {
             FILE* dfp = fopen(dp, "wb");
             if (dfp) {   // geometry mesh + the PBR volume the bake samples (may be res-512 in mixed mode)
@@ -523,7 +538,7 @@ int trellis_run(const trellis::TrellisParams& cfg) {
             dv = sverts; df = sfaces;
         } else {
             trellis::decimate_qem(sverts, (int)sverts.size()/3, sfaces, (int)sfaces.size()/3,
-                                  resolved_cascade ? 300000 : 150000, dv, df);
+                                  resolved_highres ? 300000 : 150000, dv, df);
             trellis::weld_vertices(dv, df, nullptr, 1.0f / ((float)so.res * 8.0f));
             trellis::fill_small_holes(df);
             // Second component pass on the decimated mesh: a hallucinated ground plane
