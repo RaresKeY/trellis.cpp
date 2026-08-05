@@ -43,8 +43,12 @@ void decimate_cluster(const std::vector<float>& verts, int V, const std::vector<
 
 // Quadric-error simplification (meshoptimizer) to ~target_faces, compacting the vertex buffer.
 // Smoothness-preserving, unlike the voxel-lattice clustering above (which stair-steps).
+// Fqms preserves the historical final fallback; None keeps meshoptimizer's topology guards
+// and may therefore stop above the requested face count.
+enum class SimplifyFallback { Fqms, None };
 void decimate_simplify(const std::vector<float>& verts, int V, const std::vector<int32_t>& faces, int F,
-                       int target_faces, std::vector<float>& ov, std::vector<int32_t>& of);
+                       int target_faces, std::vector<float>& ov, std::vector<int32_t>& of,
+                       SimplifyFallback fallback = SimplifyFallback::Fqms);
 
 // Faithful CPU port of CuMesh's QEM edge-collapse simplifier (refs/CuMesh/src/simplify.cu):
 // Garland-Heckbert quadrics + a skinny-triangle shape penalty + flip rejection + boundary
