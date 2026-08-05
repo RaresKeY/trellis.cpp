@@ -50,6 +50,16 @@ int trellis_run(const trellis::TrellisParams& cfg) {
     // swallows stage progress when piped (e.g. under Lemonade) if the process crashes.
     setvbuf(stdout, nullptr, _IONBF, 0);
 
+    // trellis-server serializes trellis_run calls with gen_mu. Clear this
+    // process-global flag on every return or exception so one diagnostic
+    // request cannot affect the next run.
+    struct C2SDiagnosticsReset {
+        ~C2SDiagnosticsReset() { trellis::g_c2s_diagnostics = false; }
+    } c2s_diagnostics_reset;
+    trellis::g_c2s_diagnostics = cfg.c2s_diagnostics;
+    if (cfg.c2s_diagnostics)
+        fprintf(stderr, "[c2s-config] diagnostics=on\n");
+
     std::string sampler_error;
     if (!trellis::validate_sampler_params(cfg, sampler_error)) {
         fprintf(stderr, "[trellis] invalid sampler parameters: %s\n", sampler_error.c_str());
