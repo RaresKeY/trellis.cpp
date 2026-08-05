@@ -116,6 +116,12 @@ jobs:
           ! grep -Fq "find dist -type f" "$release"
           grep -Fq 'Verify notices in Linux bundles' "$release"
           grep -Fq 'Verify notices in NSIS installer' "$release"
+          studio_line="$(grep -n '^  studio:' "$release" | cut -d: -f1)"
+          linux_verify_line="$(grep -n 'Verify notices in Linux bundles' "$release" | cut -d: -f1)"
+          nsis_verify_line="$(grep -n 'Verify notices in NSIS installer' "$release" | cut -d: -f1)"
+          test "$linux_verify_line" -gt "$studio_line"
+          test "$nsis_verify_line" -gt "$studio_line"
+          ruby -e 'require "yaml"; YAML.parse_file(ARGV.fetch(0))' "$release"
 
       - name: Verify pinned CUDA license inputs
         shell: bash
