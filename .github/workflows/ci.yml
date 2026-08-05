@@ -170,7 +170,8 @@ jobs:
       - name: Build public entry points
         run: >
           cmake --build build
-          --target trellis-cli trellis-server post-replay trellis-test-args
+          --target trellis-cli trellis-server post-replay
+          trellis-test-args trellis-test-simplify-modes
           --parallel 2
 
       - name: Smoke-test argument parsing
@@ -178,9 +179,39 @@ jobs:
           ./build/trellis-cli --help
           ./build/trellis-server --help
           ./build/post-replay --help
-          ctest --test-dir build --output-on-failure -R trellis-args
+          ctest --test-dir build --output-on-failure \
+            -R 'trellis-(args|simplify-modes)|post-replay-help'
           set +e
           ./build/post-replay ignored.bin ignored.glb --webp invalid
+          status=$?
+          set -e
+          test "$status" -eq 2
+          set +e
+          ./build/post-replay ignored.bin ignored.glb --meshopt --stop error
+          status=$?
+          set -e
+          test "$status" -eq 2
+          set +e
+          ./build/post-replay ignored.bin ignored.glb --meshopt --stop range \
+            --min-faces 100 --max-faces 200
+          status=$?
+          set -e
+          test "$status" -eq 2
+          set +e
+          ./build/post-replay ignored.bin ignored.glb --meshopt --stop target \
+            --error-percent 1
+          status=$?
+          set -e
+          test "$status" -eq 2
+          set +e
+          ./build/post-replay ignored.bin ignored.glb --meshopt --stop error \
+            --error-percent 1 --faces 100
+          status=$?
+          set -e
+          test "$status" -eq 2
+          set +e
+          ./build/post-replay ignored.bin ignored.glb --meshopt --stop range \
+            --min-faces 100 --max-faces 200 --error-percent 1 --faces 150
           status=$?
           set -e
           test "$status" -eq 2

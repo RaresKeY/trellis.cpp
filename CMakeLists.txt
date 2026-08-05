@@ -106,6 +106,7 @@ add_library(trellis_core STATIC
   src/tri_bvh.cpp
   src/remesh_dc.cpp
   src/decimate_qem.cpp
+  src/simplify_modes.cpp
 )
 target_include_directories(trellis_core PUBLIC include ${GGML_DIR}/include ${CMAKE_SOURCE_DIR}/thirdparty/stb ${CMAKE_SOURCE_DIR}/thirdparty/xatlas ${CMAKE_SOURCE_DIR}/thirdparty/meshoptimizer ${CMAKE_SOURCE_DIR}/thirdparty/fqms)
 target_compile_definitions(trellis_core PRIVATE TRELLIS_GIT_COMMIT="${TRELLIS_GIT_COMMIT}" TRELLIS_GIT_DIRTY=${TRELLIS_GIT_DIRTY} TRELLIS_BUILD_TIMESTAMP="${TRELLIS_BUILD_TIMESTAMP_UTC}" TRELLIS_APP_VERSION="${TRELLIS_APP_VERSION}")
@@ -266,6 +267,14 @@ if(BUILD_TESTING)
   add_executable(trellis-test-args src/test_trellis_args.cpp src/trellis_args.cpp)
   target_include_directories(trellis-test-args PRIVATE include)
   add_test(NAME trellis-args COMMAND trellis-test-args)
+
+  add_executable(trellis-test-simplify-modes
+    src/test_simplify_modes.cpp
+    src/simplify_modes.cpp
+    thirdparty/meshoptimizer/simplifier.cpp)
+  target_include_directories(trellis-test-simplify-modes PRIVATE
+    include thirdparty/meshoptimizer)
+  add_test(NAME trellis-simplify-modes COMMAND trellis-test-simplify-modes)
 endif()
 
 add_executable(trellis-smoke src/smoke_test.cpp)
@@ -333,6 +342,9 @@ find_package(Threads REQUIRED)
 add_executable(post-replay src/post_replay.cpp)
 target_link_libraries(post-replay PRIVATE trellis_core Threads::Threads)
 set_target_properties(post-replay PROPERTIES BUILD_RPATH "${GGML_RPATH}")
+if(BUILD_TESTING)
+  add_test(NAME post-replay-help COMMAND post-replay --help)
+endif()
 
 add_executable(trellis-server src/trellis-server.cpp src/trellis_cli.cpp src/trellis_args.cpp)
 target_include_directories(trellis-server PRIVATE ${CMAKE_SOURCE_DIR}/thirdparty/cpp-httplib)

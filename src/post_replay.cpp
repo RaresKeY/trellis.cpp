@@ -7,6 +7,7 @@
 //               [--also-atlas T] [--webp on|off] [--meshopt] [--decim GRID]
 //               [--no-weld] [--no-fill]
 #include "uv_bake.h"
+#include "simplify_modes.h"
 #include "tri_bvh.h"
 #include "remesh_dc.h"
 #include "mesh_glb.h"
@@ -16,10 +17,17 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cmath>
 #include <string>
 #include <vector>
 
 using trellis::VoxelPbr;
+
+enum class StopMode {
+    Target,
+    Error,
+    Range,
+};
 
 static double now() {
     return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -31,8 +39,12 @@ static void print_usage(FILE* stream, const char* argv0) {
         "\n"
         "options:\n"
         "  --box-uv          use box-projected UVs\n"
-        "  --faces N         target face count (default 300000)\n"
-        "  --meshopt          use guarded meshoptimizer simplification; QEM is the default\n"
+        "  --meshopt         use guarded meshoptimizer; QEM is the default\n"
+        "  --stop MODE       target | error | range (meshoptimizer only; default target)\n"
+        "  --faces N         fixed target (default 300000)\n"
+        "  --error-percent P relative deformation limit, 0..100 (required for error/range)\n"
+        "  --min-faces N     range floor (required for range)\n"
+        "  --max-faces N     range ceiling (required for range)\n"
         "  --atlas T         primary texture atlas size (default 2048)\n"
         "  --also-atlas T    write a second GLB from the same mesh at atlas size T\n"
         "  --webp on|off     request WebP textures or force PNG (default on; PNG fallback)\n"
@@ -45,6 +57,21 @@ static void print_usage(FILE* stream, const char* argv0) {
         "  --no-snap         disable texture lookup snapping\n"
         "  -h, --help        show this help\n",
         argv0);
+}
+
+static bool parse_float_option(const char* option, const char* value,
+                               float min_value, float max_value, float& result) {
+    errno = 0;
+    char* end = nullptr;
+    const float parsed = std::strtof(value, &end);
+    if (errno == ERANGE || end == value || *end != '\0' ||
+        !std::isfinite(parsed) || parsed < min_value || parsed > max_value) {
+        fprintf(stderr, "%s expects a number in [%.6g, %.6g], got '%s'\n",
+                option, min_value, max_value, value);
+        return false;
+    }
+    result = parsed;
+    return true;
 }
 
 static bool parse_int_option(const char* option, const char* value,
@@ -91,8 +118,13 @@ int main(int argc, char** argv) {
     const char* out = argv[2];
     bool boxuv = false, do_weld = true, do_fill = true, do_bake = true, do_remesh = true, do_snap = true;
     bool use_webp = true, use_meshopt = false, decim_set = false;
+    bool faces_set = false, error_percent_set = false;
+    bool min_faces_set = false, max_faces_set = false;
+    StopMode stop_mode = StopMode::Target;
     int band = 1;
     int faces_target = 300000, atlas = 2048, also_atlas = 0, decim = -1;
+    int min_faces = 0, max_faces = 0;
+    float error_percent = 0.0f;
     for (int i = 3; i < argc; ++i) {
         const std::string a = argv[i];
         auto parse_next_int = [&](int min_value, int max_value, int& result) {
@@ -106,6 +138,7 @@ int main(int argc, char** argv) {
         if (a == "--box-uv") boxuv = true;
         else if (a == "--faces") {
             if (!parse_next_int(1, INT_MAX, faces_target)) return 2;
+            faces_set = true;
         } else if (a == "--atlas") {
             if (!parse_next_int(1, INT_MAX, atlas)) return 2;
         } else if (a == "--also-atlas") {
@@ -122,6 +155,35 @@ int main(int argc, char** argv) {
                 fprintf(stderr, "--webp must be on or off, got '%s'\n", value.c_str());
                 return 2;
             }
+        } else if (a == "--stop") {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "--stop requires a mode\n");
+                return 2;
+            }
+            const std::string value = argv[++i];
+            if (value == "target") stop_mode = StopMode::Target;
+            else if (value == "error") stop_mode = StopMode::Error;
+            else if (value == "range") stop_mode = StopMode::Range;
+            else {
+                fprintf(stderr, "--stop must be target, error, or range; got '%s'\n",
+                        value.c_str());
+                return 2;
+            }
+        } else if (a == "--error-percent") {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "--error-percent requires a value\n");
+                return 2;
+            }
+            if (!parse_float_option(a.c_str(), argv[++i], 0.0f, 100.0f,
+                                    error_percent))
+                return 2;
+            error_percent_set = true;
+        } else if (a == "--min-faces") {
+            if (!parse_next_int(1, INT_MAX, min_faces)) return 2;
+            min_faces_set = true;
+        } else if (a == "--max-faces") {
+            if (!parse_next_int(1, INT_MAX, max_faces)) return 2;
+            max_faces_set = true;
         } else if (a == "--meshopt") {
             use_meshopt = true;
         } else if (a == "--decim") {
@@ -142,8 +204,48 @@ int main(int argc, char** argv) {
             return 2;
         }
     }
-    if (use_meshopt && decim_set) {
-        fprintf(stderr, "--meshopt cannot be combined with --decim\n");
+    if (!use_meshopt && stop_mode != StopMode::Target) {
+        fprintf(stderr, "--stop error/range requires --meshopt\n");
+        return 2;
+    }
+    if (use_meshopt && stop_mode == StopMode::Error && !error_percent_set) {
+        fprintf(stderr, "--stop error requires --error-percent\n");
+        return 2;
+    }
+    if (use_meshopt && stop_mode == StopMode::Range &&
+        (!min_faces_set || !max_faces_set || !error_percent_set)) {
+        fprintf(stderr,
+                "--stop range requires --min-faces, --max-faces, "
+                "and --error-percent\n");
+        return 2;
+    }
+    if (stop_mode == StopMode::Target &&
+        (error_percent_set || min_faces_set || max_faces_set)) {
+        fprintf(stderr,
+                "--stop target accepts --faces, not --error-percent/"
+                "--min-faces/--max-faces\n");
+        return 2;
+    }
+    if (stop_mode == StopMode::Error &&
+        (faces_set || min_faces_set || max_faces_set)) {
+        fprintf(stderr,
+                "--stop error accepts only --error-percent; "
+                "--faces/--min-faces/--max-faces are not used\n");
+        return 2;
+    }
+    if (stop_mode == StopMode::Range && faces_set) {
+        fprintf(stderr,
+                "--stop range uses --min-faces and --max-faces, not --faces\n");
+        return 2;
+    }
+    if (stop_mode == StopMode::Range && min_faces > max_faces) {
+        fprintf(stderr, "--min-faces (%d) must be <= --max-faces (%d)\n",
+                min_faces, max_faces);
+        return 2;
+    }
+    if (decim_set && use_meshopt) {
+        fprintf(stderr,
+                "--decim cannot be combined with --meshopt\n");
         return 2;
     }
 
@@ -191,11 +293,34 @@ int main(int argc, char** argv) {
     const std::vector<float>& sverts = rm.F() > 0 ? rm.verts : verts;
     const std::vector<int32_t>& sfaces = rm.F() > 0 ? rm.faces : faces;
 
-    std::vector<float> dv, dp; std::vector<int32_t> df;
-    if (decim > 0) trellis::decimate_cluster(sverts, (int)sverts.size()/3, sfaces, (int)sfaces.size()/3, {}, decim, dv, df, dp);
-    else if (decim == 0) { dv = sverts; df = sfaces; }
-    else {
-        if (use_meshopt) {
+    std::vector<float> dv, dp;
+    std::vector<int32_t> df;
+    if (decim > 0) {
+        trellis::decimate_cluster(
+            sverts, (int)sverts.size()/3, sfaces, (int)sfaces.size()/3,
+            {}, decim, dv, df, dp);
+    } else if (decim == 0) {
+        dv = sverts;
+        df = sfaces;
+    } else {
+        const int reducer_input_faces = (int)sfaces.size() / 3;
+        const bool adaptive_meshopt =
+            use_meshopt && stop_mode != StopMode::Target;
+        if (stop_mode == StopMode::Range &&
+            min_faces > reducer_input_faces) {
+            fprintf(stderr,
+                    "--min-faces (%d) exceeds reducer input faces (%d)\n",
+                    min_faces, reducer_input_faces);
+            return 2;
+        }
+        if (!use_meshopt) {
+            // Match the CLI's faithful CuMesh QEM port.
+            trellis::decimate_qem(
+                sverts, (int)sverts.size()/3, sfaces, (int)sfaces.size()/3,
+                faces_target, dv, df);
+            audit("decimate_qem", df);
+        } else if (stop_mode == StopMode::Target) {
+            // Keep the existing guarded fixed-target path byte-for-byte.
             trellis::decimate_simplify(
                 sverts, (int)sverts.size()/3, sfaces, (int)sfaces.size()/3,
                 faces_target, dv, df, trellis::SimplifyFallback::PreserveGuards);
@@ -208,19 +333,53 @@ int main(int argc, char** argv) {
                         actual_faces, faces_target);
             }
         } else {
-            // Match the CLI's faithful CuMesh QEM port.
-            trellis::decimate_qem(
-                sverts, (int)sverts.size()/3, sfaces, (int)sfaces.size()/3,
-                faces_target, dv, df);
-            audit("decimate_qem", df);
+            trellis::MeshoptAdaptiveOptions options;
+            options.mode = stop_mode == StopMode::Error
+                ? trellis::MeshoptAdaptiveMode::ErrorOnly
+                : trellis::MeshoptAdaptiveMode::Bounded;
+            options.min_faces = min_faces;
+            options.max_faces = max_faces;
+            options.max_error_percent = error_percent;
+            const trellis::MeshoptAdaptiveReport report =
+                trellis::decimate_meshopt_adaptive(
+                    sverts, (int)sverts.size()/3,
+                    sfaces, (int)sfaces.size()/3,
+                    options, dv, df);
+            audit(stop_mode == StopMode::Error
+                      ? "meshopt_error" : "meshopt_range",
+                  df);
+            if (!report.met_max) {
+                fprintf(stderr,
+                        "warning: requested band [%d, %d] was unreachable; "
+                        "kept %d faces (quality candidate %d)\n",
+                        min_faces, max_faces, report.output_faces,
+                        report.quality_faces);
+            } else if (report.forced && !report.error_met) {
+                fprintf(stderr,
+                        "warning: max %d forced the range output past %.4f%% "
+                        "error; quality candidate kept %d faces\n",
+                        max_faces, error_percent, report.quality_faces);
+            } else if (report.no_progress) {
+                fprintf(stderr,
+                        "warning: meshoptimizer made no progress at %.4f%% "
+                        "error (%s)\n",
+                        error_percent, report.stop_reason);
+            }
         }
-        trellis::weld_vertices(dv, df, nullptr, 1.0f / ((float)res * 8.0f));
-        audit("weld2", df);
-        trellis::fill_small_holes(df);
-        audit("fill2", df);
-        int ndrop2 = trellis::drop_small_components(dv, df, 0.03f);
-        if (ndrop2) printf("  dropped %d more comps\n", ndrop2);
-        audit("drop2", df);
+        if (adaptive_meshopt) {
+            // Input was already welded/filled/remeshed/cleaned. Preserve the
+            // policy's exact triangle count and error report; do not silently
+            // prune components or thin features after the adaptive reducer.
+            audit("meshopt_policy_final", df);
+        } else {
+            trellis::weld_vertices(dv, df, nullptr, 1.0f / ((float)res * 8.0f));
+            audit("weld2", df);
+            trellis::fill_small_holes(df);
+            audit("fill2", df);
+            int ndrop2 = trellis::drop_small_components(dv, df, 0.03f);
+            if (ndrop2) printf("  dropped %d more comps\n", ndrop2);
+            audit("drop2", df);
+        }
     }
     printf("  [decimate %.1fs]\n", now()-t); t = now();
     if (!do_bake) { printf("(--no-bake) done\n"); return 0; }
