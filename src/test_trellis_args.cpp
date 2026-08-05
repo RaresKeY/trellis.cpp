@@ -145,6 +145,88 @@ int main() {
         CHECK(enabled.c2s_diagnostics);
     }
 
+    {
+        trellis::TrellisParams p;
+        CHECK(p.max_cascade_tokens == 0);
+        CHECK(p.dense_policy == trellis::DensePolicy::Fallback512);
+        CHECK(trellis::validate_density_params(p, error));
+
+        CHECK(trellis::set_density_option(
+            "--max-cascade-tokens", "18000", p, error));
+        CHECK(trellis::set_density_option(
+            "dense_policy", "fail", p, error));
+        CHECK(p.max_cascade_tokens == 18000);
+        CHECK(p.dense_policy == trellis::DensePolicy::Fail);
+        CHECK(trellis::validate_density_params(p, error));
+
+        const int old_limit = p.max_cascade_tokens;
+        CHECK(!trellis::set_density_option(
+            "max_cascade_tokens", "12junk", p, error));
+        CHECK(p.max_cascade_tokens == old_limit);
+        CHECK(!trellis::set_density_option(
+            "max_cascade_tokens", " 12", p, error));
+        CHECK(!trellis::set_density_option(
+            "max_cascade_tokens", "12 ", p, error));
+        CHECK(!trellis::set_density_option(
+            "max_cascade_tokens", "1.0", p, error));
+        CHECK(!trellis::set_density_option(
+            "max_cascade_tokens", "999999999999999999", p, error));
+        CHECK(!trellis::set_density_option(
+            "dense_policy", "best-effort", p, error));
+
+        p = trellis::TrellisParams{};
+        CHECK(trellis::set_density_option(
+            "max_cascade_tokens", "-1", p, error));
+        CHECK(!trellis::validate_density_params(p, error));
+        p = trellis::TrellisParams{};
+        p.dense_policy = static_cast<trellis::DensePolicy>(99);
+        CHECK(!trellis::validate_density_params(p, error));
+
+        trellis::TrellisParams parsed;
+        CHECK(parse({"test", "--max-cascade-tokens", "18000",
+                     "--dense-policy", "allow"}, parsed));
+        CHECK(parsed.max_cascade_tokens == 18000);
+        CHECK(parsed.dense_policy == trellis::DensePolicy::Allow);
+        trellis::TrellisParams invalid;
+        CHECK(!parse({"test", "--max-cascade-tokens", "12junk"}, invalid));
+    }
+    {
+        using trellis::DenseGuardAction;
+        using trellis::DensePolicy;
+
+        auto d = trellis::resolve_dense_guard(
+            false, 1536, 0, 18000, DensePolicy::Fallback512);
+        CHECK(d.action == DenseGuardAction::NotApplicable);
+        CHECK(d.proceed && !d.resolved_cascade && d.resolved_resolution == 512);
+
+        d = trellis::resolve_dense_guard(
+            true, 1024, 999999, 0, DensePolicy::Fallback512);
+        CHECK(d.action == DenseGuardAction::Disabled);
+        CHECK(d.proceed && d.resolved_cascade && d.resolved_resolution == 1024);
+
+        d = trellis::resolve_dense_guard(
+            true, 1024, 17999, 18000, DensePolicy::Fail);
+        CHECK(d.action == DenseGuardAction::Pass && d.proceed);
+        d = trellis::resolve_dense_guard(
+            true, 1024, 18000, 18000, DensePolicy::Fallback512);
+        CHECK(d.action == DenseGuardAction::Pass && d.proceed);
+
+        d = trellis::resolve_dense_guard(
+            true, 1024, 18001, 18000, DensePolicy::Fail);
+        CHECK(d.action == DenseGuardAction::Fail);
+        CHECK(!d.proceed && d.resolved_cascade);
+
+        d = trellis::resolve_dense_guard(
+            true, 1024, 18001, 18000, DensePolicy::Fallback512);
+        CHECK(d.action == DenseGuardAction::Fallback512);
+        CHECK(d.proceed && !d.resolved_cascade && d.resolved_resolution == 512);
+
+        d = trellis::resolve_dense_guard(
+            true, 1536, 10001, 10000, DensePolicy::Allow);
+        CHECK(d.action == DenseGuardAction::Allow);
+        CHECK(d.proceed && d.resolved_cascade && d.resolved_resolution == 1536);
+    }
+
     if (failures) return 1;
     std::puts("sampler argument tests passed");
     return 0;
