@@ -152,6 +152,15 @@ int main(int argc, char** argv) {
         }
 
         std::string density_error;
+        // Backward-compatible alias for the private v0.5.4 deployment patch.
+        if (req.has_file("max_1024_tokens") &&
+            !trellis::set_density_option(
+                "max_1024_tokens",
+                req.get_file_value("max_1024_tokens").content,
+                p, density_error)) {
+            set_json_error(res, 400, density_error);
+            return;
+        }
         if (req.has_file("max_cascade_tokens") &&
             !trellis::set_density_option(
                 "max_cascade_tokens",
