@@ -198,7 +198,7 @@ int main(int argc, char** argv) {
         if (use_meshopt) {
             trellis::decimate_simplify(
                 sverts, (int)sverts.size()/3, sfaces, (int)sfaces.size()/3,
-                faces_target, dv, df, trellis::SimplifyFallback::None);
+                faces_target, dv, df, trellis::SimplifyFallback::PreserveGuards);
             audit("decimate_meshopt", df);
             const int actual_faces = (int)df.size() / 3;
             if (actual_faces > faces_target) {
