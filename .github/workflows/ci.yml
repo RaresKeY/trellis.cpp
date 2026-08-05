@@ -92,3 +92,8 @@ jobs:
           status=$?
           set -e
           test "$status" -eq 2
+          set +e
+          ./build/post-replay ignored.bin ignored.glb --meshopt --decim 0
+          status=$?
+          set -e
+          test "$status" -eq 2
